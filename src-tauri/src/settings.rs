@@ -4,9 +4,43 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hotkey {
+    pub code: String,
+    #[serde(default)]
+    pub modifiers: Vec<String>,
+}
+
+impl Default for Hotkey {
+    fn default() -> Self {
+        Self {
+            code: "F9".to_string(),
+            modifiers: Vec::new(),
+        }
+    }
+}
+
+impl Hotkey {
+    pub fn display(&self) -> String {
+        let mut parts: Vec<&str> = self.modifiers.iter().map(|s| s.as_str()).collect();
+        parts.push(&self.code);
+        parts.join(" + ")
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HudPosition {
+    pub x: i32,
+    pub y: i32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
     pub input_device: Option<String>,
+    #[serde(default)]
+    pub hotkey: Option<Hotkey>,
+    #[serde(default)]
+    pub hud_position: Option<HudPosition>,
 }
 
 impl Settings {

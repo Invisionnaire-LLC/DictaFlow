@@ -1,0 +1,323 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>DictaFlow Settings</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #1e1e22;
+      color: #e8e8ec;
+    }
+    .wrap { padding: 22px 26px 26px; }
+    h1 { margin: 0 0 4px 0; font-size: 17px; font-weight: 600; }
+    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 14px; }
+    .section { margin-bottom: 22px; }
+    .section:last-of-type { margin-bottom: 0; }
+    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    label { color: #9a9aa0; font-size: 12px; min-width: 64px; }
+    .combo {
+      flex: 1;
+      padding: 9px 12px;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 13px;
+      color: #e8e8ec;
+      min-height: 18px;
+    }
+    .combo.recording {
+      border-color: #64b5f6;
+      background: #1c2a3a;
+    }
+    button {
+      padding: 7px 13px;
+      background: #3a3a42;
+      border: 1px solid #4a4a52;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #45454f; }
+    button.primary { background: #1976d2; border-color: #1565c0; }
+    button.primary:hover { background: #1e88e5; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .inline-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+    .msg {
+      margin-top: 8px;
+      font-size: 11px;
+      min-height: 14px;
+    }
+    .msg.err { color: #ef9a9a; }
+    .msg.ok { color: #a5d6a7; }
+    .hint { font-size: 11px; color: #7a7a80; margin-top: 6px; line-height: 1.4; }
+    hr { border: 0; border-top: 1px solid #2e2e35; margin: 0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="section">
+      <h1>Hotkey</h1>
+      <div class="sub">The key you hold to dictate. Click below and press a key (optionally with modifiers).</div>
+
+      <div class="row">
+        <label>Current</label>
+        <div id="current" class="combo">—</div>
+      </div>
+
+      <div class="row">
+        <label>New</label>
+        <div id="capture" class="combo" tabindex="0">Click here, then press keys…</div>
+      </div>
+
+      <div class="hint">
+        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space).
+      </div>
+
+      <div id="hkMsg" class="msg"></div>
+
+      <div class="inline-actions">
+        <button id="save" class="primary" disabled>Save hotkey</button>
+      </div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <h1 style="margin-top: 18px">Permissions (macOS)</h1>
+      <div class="sub">DictaFlow needs Accessibility to paste at your cursor, and Microphone to record.</div>
+
+      <div class="row">
+        <label>Accessibility</label>
+        <div id="axStatus" class="combo">Checking…</div>
+      </div>
+
+      <div class="hint">
+        If paste silently fails after a rebuild, toggle Accessibility off → on for <b>dictaflow</b>. macOS revokes trust when the binary signature changes.
+      </div>
+
+      <div class="inline-actions">
+        <button id="axRequest" class="primary">Request Accessibility</button>
+        <button id="axRecheck">Re-check</button>
+        <button id="axOpen">Open Accessibility Settings</button>
+        <button id="micOpen">Open Microphone Settings</button>
+      </div>
+      <div class="hint">
+        First time setup: click <b>Request Accessibility</b>. macOS will prompt you and add <b>dictaflow</b> to the list — then toggle it on.
+      </div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <h1 style="margin-top: 18px">HUD Position</h1>
+      <div class="sub">The floating pill that shows recording state. Click Edit, drag the pill to a new spot, then Save.</div>
+
+      <div id="hudMsg" class="msg"></div>
+
+      <div class="inline-actions">
+        <button id="hudEdit">Edit position</button>
+        <button id="hudSave" class="primary" style="display:none">Save position</button>
+        <button id="hudCancel" style="display:none">Cancel</button>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="close">Close</button>
+    </div>
+  </div>
+
+  <script>
+    const invoke = window.__TAURI__.core.invoke;
+
+    const currentEl = document.getElementById("current");
+    const captureEl = document.getElementById("capture");
+    const hkMsgEl = document.getElementById("hkMsg");
+    const saveBtn = document.getElementById("save");
+    const closeBtn = document.getElementById("close");
+
+    const hudEditBtn = document.getElementById("hudEdit");
+    const hudSaveBtn = document.getElementById("hudSave");
+    const hudCancelBtn = document.getElementById("hudCancel");
+    const hudMsgEl = document.getElementById("hudMsg");
+
+    let pending = null;
+
+    function displayHotkey(h) {
+      if (!h || !h.code) return "—";
+      const parts = (h.modifiers || []).slice();
+      parts.push(h.code);
+      return parts.join(" + ");
+    }
+
+    async function loadCurrent() {
+      try {
+        const h = await invoke("get_hotkey");
+        currentEl.textContent = displayHotkey(h);
+      } catch (e) {
+        currentEl.textContent = "(error)";
+        console.error(e);
+      }
+    }
+    loadCurrent();
+
+    const MODIFIER_CODES = new Set([
+      "ControlLeft", "ControlRight",
+      "ShiftLeft", "ShiftRight",
+      "AltLeft", "AltRight",
+      "MetaLeft", "MetaRight",
+    ]);
+
+    function collectModifiers(e) {
+      const out = [];
+      if (e.ctrlKey) out.push("Control");
+      if (e.altKey) out.push("Alt");
+      if (e.shiftKey) out.push("Shift");
+      if (e.metaKey) out.push("Meta");
+      return out;
+    }
+
+    function onKeyDown(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (MODIFIER_CODES.has(e.code)) {
+        const mods = collectModifiers(e);
+        captureEl.textContent = mods.length ? mods.join(" + ") + " + …" : "…";
+        return;
+      }
+      const modifiers = collectModifiers(e);
+      pending = { code: e.code, modifiers };
+      captureEl.textContent = displayHotkey(pending);
+      captureEl.classList.remove("recording");
+      saveBtn.disabled = false;
+      hkMsgEl.textContent = "";
+      hkMsgEl.className = "msg";
+      captureEl.blur();
+    }
+
+    captureEl.addEventListener("focus", () => {
+      captureEl.classList.add("recording");
+      captureEl.textContent = "Press keys…";
+    });
+    captureEl.addEventListener("blur", () => {
+      captureEl.classList.remove("recording");
+      if (!pending) captureEl.textContent = "Click here, then press keys…";
+    });
+    captureEl.addEventListener("click", () => captureEl.focus());
+    captureEl.addEventListener("keydown", onKeyDown);
+
+    saveBtn.addEventListener("click", async () => {
+      if (!pending) return;
+      saveBtn.disabled = true;
+      hkMsgEl.textContent = "";
+      hkMsgEl.className = "msg";
+      try {
+        const saved = await invoke("set_hotkey", { hotkey: pending });
+        currentEl.textContent = displayHotkey(saved);
+        hkMsgEl.textContent = "Saved.";
+        hkMsgEl.className = "msg ok";
+        pending = null;
+        captureEl.textContent = "Click here, then press keys…";
+        saveBtn.disabled = true;
+      } catch (err) {
+        hkMsgEl.textContent = String(err);
+        hkMsgEl.className = "msg err";
+        saveBtn.disabled = false;
+      }
+    });
+
+    closeBtn.addEventListener("click", () => {
+      invoke("close_settings").catch(() => {});
+    });
+
+    // --- Permissions ---
+
+    const axStatusEl = document.getElementById("axStatus");
+    async function refreshAx() {
+      axStatusEl.textContent = "Checking…";
+      axStatusEl.style.color = "";
+      try {
+        const granted = await invoke("check_accessibility");
+        if (granted) {
+          axStatusEl.textContent = "Granted ✓";
+          axStatusEl.style.color = "#a5d6a7";
+        } else {
+          axStatusEl.textContent = "Not granted — paste will silently fail";
+          axStatusEl.style.color = "#ef9a9a";
+        }
+      } catch (e) {
+        axStatusEl.textContent = "(error checking)";
+      }
+    }
+    refreshAx();
+
+    document.getElementById("axRequest").addEventListener("click", async () => {
+      try {
+        await invoke("prompt_accessibility");
+        setTimeout(refreshAx, 500);
+      } catch (e) {
+        console.error(e);
+      }
+    });
+    document.getElementById("axRecheck").addEventListener("click", refreshAx);
+    document.getElementById("axOpen").addEventListener("click", () => {
+      invoke("open_accessibility_settings").catch(() => {});
+    });
+    document.getElementById("micOpen").addEventListener("click", () => {
+      invoke("open_microphone_settings").catch(() => {});
+    });
+
+    // --- HUD position ---
+
+    function setHudEditing(editing) {
+      hudEditBtn.style.display = editing ? "none" : "";
+      hudSaveBtn.style.display = editing ? "" : "none";
+      hudCancelBtn.style.display = editing ? "" : "none";
+    }
+
+    hudEditBtn.addEventListener("click", async () => {
+      hudMsgEl.textContent = "";
+      hudMsgEl.className = "msg";
+      try {
+        await invoke("hud_edit_start");
+        setHudEditing(true);
+        hudMsgEl.textContent = "Drag the glowing pill to its new spot, then click Save.";
+        hudMsgEl.className = "msg";
+      } catch (err) {
+        hudMsgEl.textContent = String(err);
+        hudMsgEl.className = "msg err";
+      }
+    });
+
+    hudSaveBtn.addEventListener("click", async () => {
+      try {
+        await invoke("hud_edit_save");
+        setHudEditing(false);
+        hudMsgEl.textContent = "Position saved.";
+        hudMsgEl.className = "msg ok";
+      } catch (err) {
+        hudMsgEl.textContent = String(err);
+        hudMsgEl.className = "msg err";
+      }
+    });
+
+    hudCancelBtn.addEventListener("click", async () => {
+      try {
+        await invoke("hud_edit_cancel");
+        setHudEditing(false);
+        hudMsgEl.textContent = "Reverted.";
+        hudMsgEl.className = "msg";
+      } catch (err) {
+        hudMsgEl.textContent = String(err);
+        hudMsgEl.className = "msg err";
+      }
+    });
+  </script>
+</body>
+</html>

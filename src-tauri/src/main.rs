@@ -20,10 +20,13 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
+use std::str::FromStr;
+
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::audio::{AudioController, PcmBuffer, MIN_DURATION_SECS};
 use crate::cleanup::HybridCleaner;
+use crate::settings::{Hotkey, HudPosition};
 use crate::state::AppState;
 
 pub struct AppContext {
@@ -31,21 +34,46 @@ pub struct AppContext {
     pub cleaner: HybridCleaner,
     pub asr: Mutex<Option<Arc<asr::Transcriber>>>,
     pub state: Mutex<AppState>,
+    pub current_shortcut: Mutex<Shortcut>,
+    pub current_hotkey: Mutex<Hotkey>,
 }
 
-fn tray_icon_image(state: AppState) -> Image<'static> {
-    const SIZE: u32 = 32;
-    let (r, g, b) = match state {
-        AppState::Recording => (33u8, 150, 243),
-        AppState::Processing => (255, 183, 77),
-        AppState::Error => (229, 115, 115),
-        AppState::Idle => (120, 128, 140),
-    };
-    let mut pixels = Vec::with_capacity((SIZE * SIZE * 4) as usize);
-    for _ in 0..(SIZE * SIZE) {
-        pixels.extend_from_slice(&[r, g, b, 255]);
+fn parse_modifiers(mods: &[String]) -> Result<Option<Modifiers>, String> {
+    if mods.is_empty() {
+        return Ok(None);
     }
-    Image::new_owned(pixels, SIZE, SIZE)
+    let mut out = Modifiers::empty();
+    for m in mods {
+        match m.as_str() {
+            "Control" | "Ctrl" => out |= Modifiers::CONTROL,
+            "Alt" | "Option" => out |= Modifiers::ALT,
+            "Shift" => out |= Modifiers::SHIFT,
+            "Meta" | "Command" | "Cmd" | "Super" => out |= Modifiers::SUPER,
+            other => return Err(format!("unknown modifier: {}", other)),
+        }
+    }
+    Ok(Some(out))
+}
+
+fn hotkey_to_shortcut(h: &Hotkey) -> Result<Shortcut, String> {
+    let code = Code::from_str(&h.code).map_err(|_| format!("unknown key code: {}", h.code))?;
+    let mods = parse_modifiers(&h.modifiers)?;
+    Ok(Shortcut::new(mods, code))
+}
+
+const TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/tray.png");
+
+static TRAY_ICON_DECODED: once_cell::sync::Lazy<(Vec<u8>, u32, u32)> =
+    once_cell::sync::Lazy::new(|| {
+        let img = image::load_from_memory(TRAY_ICON_BYTES).expect("decode tray icon");
+        let rgba = img.to_rgba8();
+        let (w, h) = (rgba.width(), rgba.height());
+        (rgba.into_raw(), w, h)
+    });
+
+fn tray_icon_image(_state: AppState) -> Image<'static> {
+    let (pixels, w, h) = &*TRAY_ICON_DECODED;
+    Image::new_owned(pixels.clone(), *w, *h)
 }
 
 fn set_state(app: &AppHandle, new_state: AppState) {
@@ -79,6 +107,18 @@ fn main() {
                 })
                 .build(),
         )
+        .invoke_handler(tauri::generate_handler![
+            get_hotkey,
+            set_hotkey,
+            close_settings,
+            hud_edit_start,
+            hud_edit_save,
+            hud_edit_cancel,
+            check_accessibility,
+            prompt_accessibility,
+            open_accessibility_settings,
+            open_microphone_settings
+        ])
         .setup(|app| {
             let (audio, level_rx) = AudioController::spawn();
             let cleaner = HybridCleaner::new(Duration::from_millis(800));
@@ -89,17 +129,27 @@ fn main() {
                 tracing::info!("settings: using input device '{}'", d);
             }
 
+            let hotkey = saved.hotkey.clone().unwrap_or_default();
+            let shortcut = match hotkey_to_shortcut(&hotkey) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("saved hotkey invalid ({}), using default F9", e);
+                    Shortcut::new(None, Code::F9)
+                }
+            };
+
             let ctx = AppContext {
                 audio,
                 cleaner,
                 asr: Mutex::new(None),
                 state: Mutex::new(AppState::Idle),
+                current_shortcut: Mutex::new(shortcut),
+                current_hotkey: Mutex::new(hotkey.clone()),
             };
             app.manage(ctx);
 
-            let shortcut = Shortcut::new(None, Code::F9);
             app.global_shortcut().register(shortcut)?;
-            tracing::info!("registered global shortcut: F9 (hold to dictate)");
+            tracing::info!("registered global shortcut: {} (hold to dictate)", hotkey.display());
 
             build_tray(app.handle())?;
             build_hud(app.handle())?;
@@ -115,9 +165,11 @@ fn main() {
 
 fn build_menu<R: Runtime>(app: &AppHandle<R>, current_device: Option<&str>) -> tauri::Result<Menu<R>> {
     let about_item = MenuItem::with_id(app, "about", "About DictaFlow", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
+    let sep3 = PredefinedMenuItem::separator(app)?;
 
     let default_mic = CheckMenuItem::with_id(
         app,
@@ -150,7 +202,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, current_device: Option<&str>) -> t
 
     Menu::with_items(
         app,
-        &[&about_item, &sep1, &mic_submenu, &sep2, &quit_item],
+        &[&about_item, &sep1, &mic_submenu, &sep2, &settings_item, &sep3, &quit_item],
     )
 }
 
@@ -160,9 +212,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .and_then(|ctx| ctx.audio.device.lock().clone());
     let menu = build_menu(app, current.as_deref())?;
 
+    let hotkey_label = app
+        .try_state::<AppContext>()
+        .map(|ctx| ctx.current_hotkey.lock().display())
+        .unwrap_or_else(|| "F9".to_string());
+
     TrayIconBuilder::with_id("main")
         .icon(tray_icon_image(AppState::Idle))
-        .tooltip("DictaFlow — hold F9 to dictate")
+        .icon_as_template(true)
+        .tooltip(format!("DictaFlow — hold {} to dictate", hotkey_label))
         .menu(&menu)
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
@@ -172,6 +230,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                         tracing::error!("about window: {:?}", e);
                     }
                 }
+                "settings" => {
+                    if let Err(e) = show_settings(app.clone()) {
+                        tracing::error!("settings window: {:?}", e);
+                    }
+                }
                 "quit" => app.exit(0),
                 id if id.starts_with("mic:") => {
                     let name = &id["mic:".len()..];
@@ -179,9 +242,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     if let Some(ctx) = app.try_state::<AppContext>() {
                         ctx.audio.set_device(selection.clone());
                     }
-                    let saved = settings::Settings {
-                        input_device: selection.clone(),
-                    };
+                    let mut saved = settings::Settings::load();
+                    saved.input_device = selection.clone();
                     if let Err(e) = saved.save() {
                         tracing::warn!("could not save settings: {:?}", e);
                     }
@@ -228,6 +290,8 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
         .build()?;
 
     position_hud(&window);
+    #[cfg(target_os = "macos")]
+    raise_hud_level(&window);
 
     let app_clone = app.clone();
     window.on_window_event(move |event| {
@@ -242,14 +306,124 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const std::ffi::c_void) -> bool;
+}
+
+#[tauri::command]
+fn check_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        return AXIsProcessTrusted();
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+#[tauri::command]
+fn prompt_accessibility() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use core_foundation::{
+            base::TCFType, boolean::CFBoolean, dictionary::CFDictionary, string::CFString,
+        };
+        let key = CFString::from_static_string("AXTrustedCheckOptionPrompt");
+        let value = CFBoolean::true_value();
+        let dict = CFDictionary::from_CFType_pairs(&[(key, value)]);
+        unsafe {
+            return AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef() as *const _);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+#[tauri::command]
+fn open_accessibility_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+    }
+}
+
+#[tauri::command]
+fn open_microphone_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+            .spawn();
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn raise_hud_level(window: &tauri::WebviewWindow) {
+    use cocoa::base::id;
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_window = match window.ns_window() {
+        Ok(ptr) => ptr as id,
+        Err(e) => {
+            tracing::warn!("could not access NSWindow for HUD: {:?}", e);
+            return;
+        }
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    // NSStatusWindowLevel = 25 — above normal windows and the menu bar.
+    const NS_STATUS_WINDOW_LEVEL: i64 = 25;
+    unsafe {
+        let _: () = msg_send![ns_window, setLevel: NS_STATUS_WINDOW_LEVEL];
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
+    use cocoa::base::{id, BOOL, NO, YES};
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_window = match window.ns_window() {
+        Ok(ptr) => ptr as id,
+        Err(e) => {
+            tracing::warn!("could not access NSWindow for HUD: {:?}", e);
+            return;
+        }
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    let flag: BOOL = if draggable { YES } else { NO };
+    unsafe {
+        let _: () = msg_send![ns_window, setMovable: flag];
+        let _: () = msg_send![ns_window, setMovableByWindowBackground: flag];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_hud_draggable(_window: &tauri::WebviewWindow, _draggable: bool) {}
+
 fn position_hud(window: &tauri::WebviewWindow) {
-    if let Some(monitor) = window.current_monitor().ok().flatten() {
+    let saved = settings::Settings::load().hud_position;
+    if let Some(pos) = saved {
+        let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
+    } else if let Some(monitor) = window.current_monitor().ok().flatten() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
         let hud_w_physical = (110.0 * scale) as i32;
         let hud_h_physical = (40.0 * scale) as i32;
         let x = (size.width as i32 - hud_w_physical) / 2;
-        let y = size.height as i32 - hud_h_physical - (50.0 * scale) as i32;
+        // 120 logical px from bottom clears the Dock at its typical size.
+        let y = size.height as i32 - hud_h_physical - (120.0 * scale) as i32;
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
     let _ = window.set_size(LogicalSize::new(110.0, 40.0));
@@ -268,6 +442,127 @@ fn show_about(app: AppHandle) -> tauri::Result<()> {
         .minimizable(false)
         .maximizable(false)
         .build()?;
+    Ok(())
+}
+
+fn show_settings(app: AppHandle) -> tauri::Result<()> {
+    if let Some(existing) = app.get_webview_window("settings") {
+        existing.set_focus().ok();
+        existing.show().ok();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+        .title("DictaFlow Settings")
+        .inner_size(520.0, 720.0)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .build()?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_hotkey(app: AppHandle) -> Hotkey {
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        return ctx.current_hotkey.lock().clone();
+    }
+    Hotkey::default()
+}
+
+#[tauri::command]
+fn set_hotkey(app: AppHandle, hotkey: Hotkey) -> Result<Hotkey, String> {
+    let new_shortcut = hotkey_to_shortcut(&hotkey)?;
+
+    let ctx = app
+        .try_state::<AppContext>()
+        .ok_or_else(|| "app context missing".to_string())?;
+
+    let old_shortcut = *ctx.current_shortcut.lock();
+    let old_hotkey = ctx.current_hotkey.lock().clone();
+
+    if new_shortcut == old_shortcut {
+        return Ok(old_hotkey);
+    }
+
+    let gs = app.global_shortcut();
+    gs.unregister(old_shortcut)
+        .map_err(|e| format!("unregister failed: {}", e))?;
+
+    if let Err(e) = gs.register(new_shortcut) {
+        // roll back
+        let _ = gs.register(old_shortcut);
+        return Err(format!(
+            "OS rejected that shortcut (likely in use by another app): {}",
+            e
+        ));
+    }
+
+    *ctx.current_shortcut.lock() = new_shortcut;
+    *ctx.current_hotkey.lock() = hotkey.clone();
+
+    let mut saved = settings::Settings::load();
+    saved.hotkey = Some(hotkey.clone());
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not persist hotkey: {:?}", e);
+    }
+
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(format!(
+            "DictaFlow — hold {} to dictate",
+            hotkey.display()
+        )));
+    }
+
+    tracing::info!("hotkey changed to: {}", hotkey.display());
+    Ok(hotkey)
+}
+
+#[tauri::command]
+fn close_settings(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.close();
+    }
+}
+
+#[tauri::command]
+fn hud_edit_start(app: AppHandle) -> Result<(), String> {
+    let hud = app
+        .get_webview_window("hud")
+        .ok_or_else(|| "HUD window missing".to_string())?;
+    let _ = hud.emit("hud_edit", true);
+    set_hud_draggable(&hud, true);
+    let _ = hud.show();
+    Ok(())
+}
+
+#[tauri::command]
+fn hud_edit_save(app: AppHandle) -> Result<HudPosition, String> {
+    let hud = app
+        .get_webview_window("hud")
+        .ok_or_else(|| "HUD window missing".to_string())?;
+    let pos = hud
+        .outer_position()
+        .map_err(|e| format!("read hud position: {}", e))?;
+    let hud_pos = HudPosition {
+        x: pos.x,
+        y: pos.y,
+    };
+    let mut saved = settings::Settings::load();
+    saved.hud_position = Some(hud_pos);
+    saved.save().map_err(|e| format!("save: {}", e))?;
+    set_hud_draggable(&hud, false);
+    let _ = hud.emit("hud_edit", false);
+    Ok(hud_pos)
+}
+
+#[tauri::command]
+fn hud_edit_cancel(app: AppHandle) -> Result<(), String> {
+    let hud = app
+        .get_webview_window("hud")
+        .ok_or_else(|| "HUD window missing".to_string())?;
+    position_hud(&hud);
+    set_hud_draggable(&hud, false);
+    let _ = hud.emit("hud_edit", false);
     Ok(())
 }
 
@@ -398,7 +693,7 @@ fn handle_release(app: AppHandle) {
 
         let cleaned = ctx.cleaner.clean(&text);
 
-        if let Err(e) = paste::paste(&cleaned) {
+        if let Err(e) = paste::paste(&app_clone, &cleaned) {
             tracing::error!("paste: {:?}", e);
             set_state(&app_clone, AppState::Error);
             reset_to_idle_soon(app_clone.clone());

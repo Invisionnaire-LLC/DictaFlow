@@ -1,11 +1,26 @@
+use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+use tauri::AppHandle;
 
-pub fn paste(text: &str) -> Result<()> {
+pub fn paste(app: &AppHandle, text: &str) -> Result<()> {
+    let text = text.to_string();
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let result = paste_on_main(&text);
+        let _ = tx.send(result);
+    })
+    .map_err(|e| anyhow!("schedule main-thread paste: {}", e))?;
+
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|e| anyhow!("paste worker timed out: {}", e))?
+}
+
+fn paste_on_main(text: &str) -> Result<()> {
     let mut clipboard = Clipboard::new().context("clipboard init")?;
     let previous = clipboard.get_text().ok();
 
@@ -37,3 +52,4 @@ fn synth_paste() -> Result<()> {
     enigo.key(modifier, Direction::Release)?;
     Ok(())
 }
+

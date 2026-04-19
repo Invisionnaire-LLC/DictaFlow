@@ -34,7 +34,15 @@
       -webkit-backdrop-filter: blur(14px);
       padding: 0 8px;
       box-sizing: border-box;
-      transition: opacity 0.2s;
+      transition: opacity 0.2s, box-shadow 0.15s;
+    }
+    body[data-edit="true"] {
+      -webkit-app-region: drag;
+      app-region: drag;
+    }
+    body[data-edit="true"] .pill {
+      box-shadow: 0 0 0 2px #64b5f6, 0 0 12px rgba(100, 181, 246, 0.6);
+      cursor: move;
     }
     #mic {
       width: 22px;
@@ -145,6 +153,9 @@
         });
         unlistenRms = await listen('rms', (e) => {
           currentRms = Math.min(1, Math.max(0, Number(e.payload) || 0));
+        });
+        await listen('hud_edit', (e) => {
+          body.dataset.edit = e.payload ? 'true' : 'false';
         });
         log('listeners attached');
         return true;
