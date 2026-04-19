@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>About DictaFlow</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #1e1e22;
+      color: #e8e8ec;
+    }
+    .wrap {
+      padding: 28px 32px;
+      max-width: 360px;
+    }
+    h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 600; }
+    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 20px; }
+    dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; font-size: 13px; }
+    dt { color: #9a9aa0; }
+    dd { margin: 0; color: #e8e8ec; }
+    a { color: #64b5f6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .footer {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #2e2e35;
+      font-size: 11px;
+      color: #7a7a80;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>DictaFlow</h1>
+    <div class="sub">0.1.0 · by Invisionnaire</div>
+    <dl>
+      <dt>Transcription</dt><dd>whisper-rs · large-v3-turbo</dd>
+      <dt>Cleanup</dt><dd>Rules + Ollama · gemma3:1b</dd>
+      <dt>Hotkey</dt><dd>Hold F9 to dictate</dd>
+      <dt>Paste</dt><dd>Clipboard + Ctrl/Cmd+V</dd>
+      <dt>Platform</dt><dd>Windows · macOS</dd>
+    </dl>
+    <div class="footer">
+      Local-first. All transcription and cleanup runs on your machine.
+    </div>
+  </div>
+</body>
+</html>

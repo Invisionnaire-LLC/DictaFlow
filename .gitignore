@@ -1,0 +1,29 @@
+# Rust
+/target
+/src-tauri/target
+Cargo.lock
+
+# Tauri
+/src-tauri/gen
+/src-tauri/WixTools
+
+# Node (will be added in Phase 2+)
+node_modules
+/dist/assets
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / tooling state
+.vscode
+.idea
+*.swp
+.claude
+
+# App data
+/recordings
+/models
+
+# Local build wrapper (machine-specific paths)
+build.bat
