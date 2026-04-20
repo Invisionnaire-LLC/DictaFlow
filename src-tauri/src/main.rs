@@ -71,7 +71,7 @@ static TRAY_ICON_DECODED: once_cell::sync::Lazy<(Vec<u8>, u32, u32)> =
         (rgba.into_raw(), w, h)
     });
 
-fn tray_icon_image(_state: AppState) -> Image<'static> {
+fn tray_icon_image() -> Image<'static> {
     let (pixels, w, h) = &*TRAY_ICON_DECODED;
     Image::new_owned(pixels.clone(), *w, *h)
 }
@@ -81,19 +81,32 @@ fn set_state(app: &AppHandle, new_state: AppState) {
         *ctx.state.lock() = new_state;
     }
     let _ = app.emit("state", new_state.as_str());
-    if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_icon(Some(tray_icon_image(new_state)));
-    }
     tracing::debug!("state -> {:?}", new_state);
 }
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,dictaflow=debug")),
-        )
-        .init();
+    let log_file = dirs::home_dir()
+        .map(|h| h.join("Library/Logs/DictaFlow"))
+        .and_then(|dir| {
+            std::fs::create_dir_all(&dir).ok()?;
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(dir.join("app.log"))
+                .ok()
+        });
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,dictaflow=debug"));
+
+    match log_file {
+        Some(file) => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .init(),
+        None => tracing_subscriber::fmt().with_env_filter(env_filter).init(),
+    }
 
     tauri::Builder::default()
         .plugin(
@@ -218,7 +231,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .unwrap_or_else(|| "F9".to_string());
 
     TrayIconBuilder::with_id("main")
-        .icon(tray_icon_image(AppState::Idle))
+        .icon(tray_icon_image())
         .icon_as_template(true)
         .tooltip(format!("DictaFlow — hold {} to dictate", hotkey_label))
         .menu(&menu)
@@ -692,6 +705,18 @@ fn handle_release(app: AppHandle) {
         }
 
         let cleaned = ctx.cleaner.clean(&text);
+
+        if !check_accessibility() {
+            tracing::error!(
+                "accessibility permission missing; text copied to clipboard, paste skipped"
+            );
+            let _ = paste::copy_only(&app_clone, &cleaned);
+            let _ = app_clone.emit("paste_blocked", "accessibility");
+            open_accessibility_settings();
+            set_state(&app_clone, AppState::Error);
+            reset_to_idle_soon(app_clone.clone());
+            return;
+        }
 
         if let Err(e) = paste::paste(&app_clone, &cleaned) {
             tracing::error!("paste: {:?}", e);

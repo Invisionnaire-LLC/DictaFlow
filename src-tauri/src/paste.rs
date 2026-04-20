@@ -20,6 +20,21 @@ pub fn paste(app: &AppHandle, text: &str) -> Result<()> {
         .map_err(|e| anyhow!("paste worker timed out: {}", e))?
 }
 
+pub fn copy_only(app: &AppHandle, text: &str) -> Result<()> {
+    let text = text.to_string();
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let result = Clipboard::new()
+            .context("clipboard init")
+            .and_then(|mut cb| cb.set_text(text).context("clipboard write"));
+        let _ = tx.send(result);
+    })
+    .map_err(|e| anyhow!("schedule main-thread copy: {}", e))?;
+
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|e| anyhow!("copy worker timed out: {}", e))?
+}
+
 fn paste_on_main(text: &str) -> Result<()> {
     let mut clipboard = Clipboard::new().context("clipboard init")?;
     let previous = clipboard.get_text().ok();
