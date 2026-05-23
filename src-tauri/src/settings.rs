@@ -1,7 +1,8 @@
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b";
@@ -80,6 +81,41 @@ impl Settings {
         let json = serde_json::to_string_pretty(self)?;
         fs::write(&path, json)?;
         tracing::info!("settings saved to {}", path.display());
+        Ok(())
+    }
+
+    /// Reload settings under an exclusive lock, apply `patch`, then write atomically.
+    pub fn update<F>(patch: F) -> Result<()>
+    where
+        F: FnOnce(&mut Self),
+    {
+        let path = settings_path().ok_or_else(|| anyhow!("no settings path"))?;
+        let dir = path
+            .parent()
+            .ok_or_else(|| anyhow!("settings path has no parent"))?;
+        fs::create_dir_all(dir)?;
+
+        let lock_path = dir.join("settings.lock");
+        let lock_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        lock_file
+            .lock_exclusive()
+            .map_err(|e| anyhow!("settings lock: {}", e))?;
+
+        let mut settings = match fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
+                tracing::warn!("settings parse failed during update: {:?}", e);
+                Self::default()
+            }),
+            Err(_) => Self::default(),
+        };
+        patch(&mut settings);
+        let json = serde_json::to_string_pretty(&settings)?;
+        fs::write(&path, json)?;
+        tracing::info!("settings updated at {}", path.display());
         Ok(())
     }
 }

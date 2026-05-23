@@ -12,7 +12,7 @@ mod state;
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -24,8 +24,8 @@ use tauri::{
     image::Image,
     menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    ActivationPolicy, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime,
-    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    ActivationPolicy, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent,
+    Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -44,7 +44,14 @@ const PARTIAL_POLL_MS: u64 = 350;
 const PARTIAL_NEW_AUDIO_SECS: f32 = 0.12;
 const PARTIAL_PREVIEW_CHARS: usize = 96;
 
-static HUD_LAST_PLACED: Mutex<Option<Instant>> = Mutex::new(None);
+struct HudPlacedMark {
+    x: i32,
+    y: i32,
+    at: Instant,
+}
+
+static HUD_LAST_PLACED: Mutex<Option<HudPlacedMark>> = Mutex::new(None);
+static HUD_SAVE_GEN: AtomicU64 = AtomicU64::new(0);
 
 pub struct AppContext {
     pub audio: AudioController,
@@ -239,8 +246,15 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("tauri run failed");
+        .build(tauri::generate_context!())
+        .expect("tauri build failed")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                if let Some(hud) = app.get_webview_window("hud") {
+                    save_hud_position_from_window(&hud);
+                }
+            }
+        });
 }
 
 fn build_menu<R: Runtime>(
@@ -413,10 +427,11 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             WindowEvent::Moved(_) => {
-                if hud_move_should_persist() {
-                    if let Some(hud) = app_clone.get_webview_window("hud") {
+                if let Some(hud) = app_clone.get_webview_window("hud") {
+                    if hud_move_should_persist(&hud) {
                         save_hud_position_from_window(&hud);
                     }
+                    schedule_hud_position_save(app_clone.clone());
                 }
             }
             _ => {}
@@ -641,15 +656,40 @@ fn hud_size(style: &str) -> (f64, f64) {
     }
 }
 
-fn mark_hud_placed_programmatically() {
-    *HUD_LAST_PLACED.lock() = Some(Instant::now());
+fn mark_hud_placed_programmatically(window: &tauri::WebviewWindow) {
+    let mark = window.outer_position().ok().map(|pos| HudPlacedMark {
+        x: pos.x,
+        y: pos.y,
+        at: Instant::now(),
+    });
+    *HUD_LAST_PLACED.lock() = mark;
 }
 
-fn hud_move_should_persist() -> bool {
-    HUD_LAST_PLACED
-        .lock()
-        .map(|t| t.elapsed() > Duration::from_millis(350))
-        .unwrap_or(true)
+fn hud_move_should_persist(window: &tauri::WebviewWindow) -> bool {
+    let Ok(outer) = window.outer_position() else {
+        return false;
+    };
+    let guard = HUD_LAST_PLACED.lock();
+    let Some(mark) = guard.as_ref() else {
+        return true;
+    };
+    if outer.x != mark.x || outer.y != mark.y {
+        return true;
+    }
+    mark.at.elapsed() > Duration::from_millis(350)
+}
+
+fn schedule_hud_position_save(app: AppHandle) {
+    let gen = HUD_SAVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(400));
+        if HUD_SAVE_GEN.load(Ordering::Relaxed) != gen {
+            return;
+        }
+        if let Some(hud) = app.get_webview_window("hud") {
+            save_hud_position_from_window(&hud);
+        }
+    });
 }
 
 fn resolved_hud_anchor(settings: &settings::Settings, scale: f64) -> Option<HudAnchor> {
@@ -690,7 +730,7 @@ fn position_hud(window: &tauri::WebviewWindow) {
         let _ = window.set_size(LogicalSize::new(w, h));
         if let Some(pos) = settings.hud_position {
             let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
-            mark_hud_placed_programmatically();
+            mark_hud_placed_programmatically(window);
             return;
         }
         let Some(monitor) = window.current_monitor().ok().flatten() else {
@@ -700,7 +740,7 @@ fn position_hud(window: &tauri::WebviewWindow) {
         let x = (size.width as i32 - w_phys) / 2;
         let y = size.height as i32 - h_phys - (120.0 * scale).round() as i32;
         let _ = window.set_position(PhysicalPosition::new(x, y));
-        mark_hud_placed_programmatically();
+        mark_hud_placed_programmatically(window);
         return;
     }
 
@@ -718,7 +758,7 @@ fn position_hud(window: &tauri::WebviewWindow) {
         let _ = window.set_position(PhysicalPosition::new(x, anchor.top));
     }
     let _ = window.set_size(LogicalSize::new(HUD_EXPANDED_W, HUD_COMPACT_H));
-    mark_hud_placed_programmatically();
+    mark_hud_placed_programmatically(window);
 }
 
 fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
@@ -752,45 +792,75 @@ fn save_hud_position_from_window(window: &tauri::WebviewWindow) {
         return;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
-    let mut saved = settings::Settings::load();
-    let style = saved.hud_style.as_deref().unwrap_or("notch");
+    let style = hud_style();
     let compact_w = (HUD_COMPACT_W * scale).round() as i32;
     let expanded_w = (HUD_EXPANDED_W * scale).round() as i32;
 
-    if style == "classic" {
-        saved.hud_position = Some(HudPosition {
-            x: outer.x,
-            y: outer.y,
-        });
-        saved.hud_anchor = None;
+    let (anchor, position) = if style == "classic" {
+        (
+            None,
+            Some(HudPosition {
+                x: outer.x,
+                y: outer.y,
+            }),
+        )
     } else {
         let anchor = HudAnchor {
             right: outer.x + expanded_w,
             top: outer.y,
         };
-        let unchanged = saved
+        (
+            Some(anchor),
+            Some(HudPosition {
+                x: anchor.right - compact_w,
+                y: anchor.top,
+            }),
+        )
+    };
+
+    if let Some(a) = anchor {
+        let saved = settings::Settings::load();
+        if saved
             .hud_anchor
-            .is_some_and(|a| a.right == anchor.right && a.top == anchor.top);
-        if unchanged {
+            .is_some_and(|existing| existing.right == a.right && existing.top == a.top)
+        {
             return;
         }
-        saved.hud_anchor = Some(anchor);
-        saved.hud_position = Some(HudPosition {
-            x: anchor.right - compact_w,
-            y: anchor.top,
-        });
+    } else if let Some(pos) = position {
+        let saved = settings::Settings::load();
+        if saved
+            .hud_position
+            .is_some_and(|existing| existing.x == pos.x && existing.y == pos.y)
+            && saved.hud_anchor.is_none()
+        {
+            return;
+        }
     }
 
-    if let Err(e) = saved.save() {
-        tracing::warn!("could not save hud position: {:?}", e);
-    } else if style == "notch" {
-        if let Some(anchor) = saved.hud_anchor {
-            tracing::info!(
-                "hud anchor saved: right={}, top={}",
-                anchor.right,
-                anchor.top
-            );
+    let result = settings::Settings::update(|saved| {
+        saved.hud_style.get_or_insert_with(|| style.clone());
+        if style == "classic" {
+            saved.hud_position = position;
+            saved.hud_anchor = None;
+        } else if let (Some(anchor), Some(position)) = (anchor, position) {
+            saved.hud_anchor = Some(anchor);
+            saved.hud_position = Some(position);
         }
+    });
+
+    match result {
+        Ok(()) => {
+            if let Some(anchor) = anchor {
+                tracing::info!(
+                    "hud anchor saved: right={}, top={}",
+                    anchor.right,
+                    anchor.top
+                );
+            } else if let Some(pos) = position {
+                tracing::info!("hud position saved: x={}, y={}", pos.x, pos.y);
+            }
+        }
+        Err(e) => tracing::warn!("could not save hud position: {:?}", e),
     }
 }
 
@@ -1016,11 +1086,10 @@ fn set_hud_style(app: AppHandle, style: String) -> Result<String, String> {
     } else {
         "notch".to_string()
     };
-    let mut saved = settings::Settings::load();
-    saved.hud_style = Some(style.clone());
-    saved.hud_position = None;
-    saved.hud_anchor = None;
-    saved.save().map_err(|e| format!("save: {}", e))?;
+    settings::Settings::update(|saved| {
+        saved.hud_style = Some(style.clone());
+    })
+    .map_err(|e| format!("save: {}", e))?;
     if let Some(hud) = app.get_webview_window("hud") {
         position_hud(&hud);
         let _ = hud.emit("hud_style", &style);
