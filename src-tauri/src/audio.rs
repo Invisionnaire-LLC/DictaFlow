@@ -40,13 +40,17 @@ pub struct AudioController {
 }
 
 impl AudioController {
-    pub fn spawn() -> Self {
+    pub fn spawn() -> (Self, mpsc::Receiver<f32>) {
         let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCmd>();
-        thread::spawn(move || run(cmd_rx));
-        AudioController {
-            tx: cmd_tx,
-            device: Arc::new(Mutex::new(None)),
-        }
+        let (level_tx, level_rx) = mpsc::channel::<f32>();
+        thread::spawn(move || run(cmd_rx, level_tx));
+        (
+            AudioController {
+                tx: cmd_tx,
+                device: Arc::new(Mutex::new(None)),
+            },
+            level_rx,
+        )
     }
 
     pub fn start(&self) -> Result<()> {
@@ -91,7 +95,7 @@ struct ActiveStream {
     channels: u16,
 }
 
-fn run(rx: mpsc::Receiver<AudioCmd>) {
+fn run(rx: mpsc::Receiver<AudioCmd>, level_tx: mpsc::Sender<f32>) {
     let mut active: Option<ActiveStream> = None;
 
     while let Ok(cmd) = rx.recv() {
@@ -101,7 +105,7 @@ fn run(rx: mpsc::Receiver<AudioCmd>) {
                     tracing::warn!("start received while already recording; ignoring");
                     continue;
                 }
-                match build_stream(device_name.as_deref()) {
+                match build_stream(level_tx.clone(), device_name.as_deref()) {
                     Ok(s) => active = Some(s),
                     Err(e) => tracing::error!("failed to start audio: {:?}", e),
                 }
@@ -124,7 +128,7 @@ fn run(rx: mpsc::Receiver<AudioCmd>) {
     }
 }
 
-fn build_stream(device_name: Option<&str>) -> Result<ActiveStream> {
+fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Result<ActiveStream> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -163,9 +167,11 @@ fn build_stream(device_name: Option<&str>) -> Result<ActiveStream> {
     let stream = match sample_format {
         SampleFormat::F32 => {
             let buf = buffer.clone();
+            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
+                    let _ = ltx.send(rms(data));
                     buf.lock().extend_from_slice(data);
                 },
                 err_fn,
@@ -174,11 +180,14 @@ fn build_stream(device_name: Option<&str>) -> Result<ActiveStream> {
         }
         SampleFormat::I16 => {
             let buf = buffer.clone();
+            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
                     let mut guard = buf.lock();
+                    let before = guard.len();
                     guard.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
+                    let _ = ltx.send(rms(&guard[before..]));
                 },
                 err_fn,
                 None,
@@ -186,13 +195,16 @@ fn build_stream(device_name: Option<&str>) -> Result<ActiveStream> {
         }
         SampleFormat::U16 => {
             let buf = buffer.clone();
+            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
                     let mut guard = buf.lock();
+                    let before = guard.len();
                     guard.extend(data.iter().map(|&s| {
                         (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
                     }));
+                    let _ = ltx.send(rms(&guard[before..]));
                 },
                 err_fn,
                 None,

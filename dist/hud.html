@@ -5,7 +5,7 @@
   <title>DictaFlow HUD</title>
   <style>
     :root {
-      --bg: #000000;
+      --bg: rgba(18, 18, 22, 0.88);
       --fg-idle: rgba(180, 180, 188, 0.9);
       --fg-recording: #2196F3;
       --fg-processing: #FFB74D;
@@ -42,7 +42,7 @@
       width: var(--pill-compact-w);
       height: 100%;
       background: var(--bg);
-      border-radius: 0 0 0 14px;
+      border-radius: 16px;
       padding: 0 5px;
       box-sizing: border-box;
       pointer-events: auto;
@@ -62,9 +62,28 @@
       padding: 0 5px 0 8px;
       gap: 6px;
     }
-    body:active .pill {
-      cursor: grabbing;
+    body[data-state="idle"] .pill { opacity: 0.72; }
+    body[data-state="recording"] .pill { opacity: 1; }
+    body:active .pill { cursor: grabbing; }
+
+    body[data-style="classic"] .pill {
+      position: static;
+      width: 100% !important;
+      border-radius: 16px;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 8px;
     }
+    body[data-style="classic"][data-layout="expanded"] .pill {
+      width: 100% !important;
+    }
+
+    body[data-style="notch"] .pill {
+      background: #000;
+      border-radius: 0 0 0 14px;
+    }
+    body[data-style="notch"][data-state="idle"] .pill { opacity: 1; }
+
     #mic {
       flex: 0 0 20px;
       order: 3;
@@ -89,19 +108,28 @@
       text-align: left;
       display: none;
     }
-    #preview span {
-      display: inline-block;
-    }
-    body[data-layout="expanded"] #preview {
-      display: block;
-    }
-    body[data-layout="compact"] #preview {
-      display: none;
-    }
+    #preview span { display: inline-block; }
+    body[data-layout="expanded"][data-style="notch"] #preview { display: block; }
     #preview.empty span {
       color: rgba(255, 255, 255, 0.45);
       font-style: italic;
     }
+
+    #bars {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      height: 28px;
+      order: 2;
+    }
+    body[data-style="classic"] #bars { display: flex; }
+    .bar {
+      width: 4px;
+      border-radius: 2px;
+      background: var(--fg-idle);
+      transition: background 0.15s;
+    }
+    body[data-state="recording"] .bar { background: var(--fg-recording); }
 
     #spinner {
       display: none;
@@ -115,13 +143,22 @@
       animation: spin 0.8s linear infinite;
     }
     body[data-state="processing"] #spinner { display: block; }
+    body[data-state="processing"][data-style="classic"] #bars { display: none; }
+    body[data-style="notch"] #bars { display: none !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
-<body data-state="idle" data-layout="compact">
+<body data-state="idle" data-layout="compact" data-style="notch">
   <div class="shell">
     <div class="pill">
       <div id="preview" class="empty"><span>Listening…</span></div>
+      <div id="bars">
+        <div class="bar" style="height: 4px"></div>
+        <div class="bar" style="height: 4px"></div>
+        <div class="bar" style="height: 4px"></div>
+        <div class="bar" style="height: 4px"></div>
+        <div class="bar" style="height: 4px"></div>
+      </div>
       <div id="spinner"></div>
       <svg id="mic" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
@@ -133,6 +170,9 @@
     const body = document.body;
     const previewEl = document.getElementById('preview');
     const previewTextEl = previewEl.querySelector('span');
+    const bars = document.querySelectorAll('.bar');
+    let currentRms = 0;
+    let smoothed = 0;
 
     function setPreview(text) {
       const trimmed = String(text || '').trim();
@@ -149,13 +189,35 @@
       });
     }
 
+    function animateBars() {
+      smoothed += (currentRms - smoothed) * 0.35;
+      const base = 6;
+      const maxGrowth = 22;
+      const now = Date.now();
+      bars.forEach((bar, i) => {
+        const phase = (now / 180) + i * 0.7;
+        const wiggle = (Math.sin(phase) + 1) / 2;
+        const isRecording = body.dataset.state === 'recording';
+        const boost = isRecording ? Math.max(smoothed, 0.05) : 0;
+        const h = base + boost * maxGrowth * (0.4 + wiggle * 0.6);
+        bar.style.height = h.toFixed(1) + 'px';
+      });
+      requestAnimationFrame(animateBars);
+    }
+    animateBars();
+
     async function setup() {
       if (!window.__TAURI__?.event) return false;
       const { listen } = window.__TAURI__.event;
       await listen('state', (e) => {
         body.dataset.state = String(e.payload);
+        if (e.payload !== 'recording') currentRms = 0;
+      });
+      await listen('rms', (e) => {
+        currentRms = Math.min(1, Math.max(0, Number(e.payload) || 0));
       });
       await listen('hud_layout', (e) => {
+        if (body.dataset.style !== 'notch') return;
         body.dataset.layout = e.payload === 'expanded' ? 'expanded' : 'compact';
         if (e.payload === 'expanded') {
           previewTextEl.textContent = 'Listening…';
@@ -168,8 +230,16 @@
         }
       });
       await listen('partial', (e) => {
-        setPreview(e.payload);
+        if (body.dataset.style === 'notch') setPreview(e.payload);
       });
+      await listen('hud_style', (e) => {
+        body.dataset.style = String(e.payload) === 'classic' ? 'classic' : 'notch';
+      });
+      if (window.__TAURI__?.core?.invoke) {
+        try {
+          body.dataset.style = await window.__TAURI__.core.invoke('get_hud_style');
+        } catch (_) {}
+      }
       return true;
     }
 

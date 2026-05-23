@@ -50,6 +50,9 @@ pub struct Settings {
     pub hotkey: Option<Hotkey>,
     #[serde(default)]
     pub hud_position: Option<HudPosition>,
+    /// HUD appearance: "classic" (bottom pill + waveform) or "notch" (top minimal bar).
+    #[serde(default)]
+    pub hud_style: Option<String>,
     #[serde(default)]
     pub hud_anchor: Option<HudAnchor>,
     #[serde(default)]

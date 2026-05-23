@@ -14,6 +14,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -180,6 +181,8 @@ fn main() {
             delete_history_entry,
             clear_history,
             copy_text,
+            get_hud_style,
+            set_hud_style,
             check_accessibility,
             prompt_accessibility,
             open_accessibility_settings,
@@ -189,7 +192,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
 
-            let audio = AudioController::spawn();
+            let (audio, level_rx) = AudioController::spawn();
             let saved = settings::Settings::load();
             let ollama_model = saved
                 .ollama_model
@@ -231,6 +234,7 @@ fn main() {
             build_tray(app.handle())?;
             build_hud(app.handle())?;
 
+            spawn_rms_forwarder(app.handle().clone(), level_rx);
             spawn_initialization(app.handle().clone());
 
             Ok(())
@@ -373,8 +377,12 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("hud").is_some() {
         return Ok(());
     }
-    let width = HUD_EXPANDED_W;
-    let height = HUD_COMPACT_H;
+    let style = hud_style();
+    let (width, height) = if style == "notch" {
+        (HUD_EXPANDED_W, HUD_COMPACT_H)
+    } else {
+        hud_size("classic")
+    };
 
     let window = WebviewWindowBuilder::new(app, "hud", WebviewUrl::App("hud.html".into()))
         .title("DictaFlow HUD")
@@ -390,6 +398,7 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
 
     position_hud(&window);
     persist_legacy_hud_anchor(&window);
+    let _ = window.emit("hud_style", style.as_str());
     #[cfg(target_os = "macos")]
     raise_hud_level(&window);
     set_hud_draggable(&window, true);
@@ -618,6 +627,20 @@ fn open_auxiliary_window(
     Ok(())
 }
 
+fn hud_style() -> String {
+    settings::Settings::load()
+        .hud_style
+        .unwrap_or_else(|| "notch".to_string())
+}
+
+fn hud_size(style: &str) -> (f64, f64) {
+    if style == "notch" {
+        (HUD_EXPANDED_W, HUD_COMPACT_H)
+    } else {
+        (110.0, 40.0)
+    }
+}
+
 fn mark_hud_placed_programmatically() {
     *HUD_LAST_PLACED.lock() = Some(Instant::now());
 }
@@ -657,8 +680,31 @@ fn default_hud_anchor(monitor: &tauri::Monitor, scale: f64) -> HudAnchor {
 
 fn position_hud(window: &tauri::WebviewWindow) {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let expanded_w_phys = (HUD_EXPANDED_W * scale).round() as i32;
     let settings = settings::Settings::load();
+    let style = settings.hud_style.as_deref().unwrap_or("notch");
+
+    if style == "classic" {
+        let (w, h) = hud_size("classic");
+        let w_phys = (w * scale).round() as i32;
+        let h_phys = (h * scale).round() as i32;
+        let _ = window.set_size(LogicalSize::new(w, h));
+        if let Some(pos) = settings.hud_position {
+            let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
+            mark_hud_placed_programmatically();
+            return;
+        }
+        let Some(monitor) = window.current_monitor().ok().flatten() else {
+            return;
+        };
+        let size = monitor.size();
+        let x = (size.width as i32 - w_phys) / 2;
+        let y = size.height as i32 - h_phys - (120.0 * scale).round() as i32;
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+        mark_hud_placed_programmatically();
+        return;
+    }
+
+    let expanded_w_phys = (HUD_EXPANDED_W * scale).round() as i32;
     let anchor = resolved_hud_anchor(&settings, scale).or_else(|| {
         window
             .current_monitor()
@@ -706,34 +752,45 @@ fn save_hud_position_from_window(window: &tauri::WebviewWindow) {
         return;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
+    let mut saved = settings::Settings::load();
+    let style = saved.hud_style.as_deref().unwrap_or("notch");
     let compact_w = (HUD_COMPACT_W * scale).round() as i32;
     let expanded_w = (HUD_EXPANDED_W * scale).round() as i32;
-    let anchor = HudAnchor {
-        right: outer.x + expanded_w,
-        top: outer.y,
-    };
 
-    let mut saved = settings::Settings::load();
-    let unchanged = saved
-        .hud_anchor
-        .is_some_and(|a| a.right == anchor.right && a.top == anchor.top);
-    if unchanged {
-        return;
+    if style == "classic" {
+        saved.hud_position = Some(HudPosition {
+            x: outer.x,
+            y: outer.y,
+        });
+        saved.hud_anchor = None;
+    } else {
+        let anchor = HudAnchor {
+            right: outer.x + expanded_w,
+            top: outer.y,
+        };
+        let unchanged = saved
+            .hud_anchor
+            .is_some_and(|a| a.right == anchor.right && a.top == anchor.top);
+        if unchanged {
+            return;
+        }
+        saved.hud_anchor = Some(anchor);
+        saved.hud_position = Some(HudPosition {
+            x: anchor.right - compact_w,
+            y: anchor.top,
+        });
     }
 
-    saved.hud_anchor = Some(anchor);
-    saved.hud_position = Some(HudPosition {
-        x: anchor.right - compact_w,
-        y: anchor.top,
-    });
     if let Err(e) = saved.save() {
         tracing::warn!("could not save hud position: {:?}", e);
-    } else {
-        tracing::info!(
-            "hud anchor saved: right={}, top={}",
-            anchor.right,
-            anchor.top
-        );
+    } else if style == "notch" {
+        if let Some(anchor) = saved.hud_anchor {
+            tracing::info!(
+                "hud anchor saved: right={}, top={}",
+                anchor.right,
+                anchor.top
+            );
+        }
     }
 }
 
@@ -947,6 +1004,38 @@ fn close_settings(app: AppHandle) {
     restore_menu_bar_activation_policy(&app);
 }
 
+#[tauri::command]
+fn get_hud_style() -> String {
+    hud_style()
+}
+
+#[tauri::command]
+fn set_hud_style(app: AppHandle, style: String) -> Result<String, String> {
+    let style = if style == "classic" {
+        "classic".to_string()
+    } else {
+        "notch".to_string()
+    };
+    let mut saved = settings::Settings::load();
+    saved.hud_style = Some(style.clone());
+    saved.hud_position = None;
+    saved.hud_anchor = None;
+    saved.save().map_err(|e| format!("save: {}", e))?;
+    if let Some(hud) = app.get_webview_window("hud") {
+        position_hud(&hud);
+        let _ = hud.emit("hud_style", &style);
+    }
+    Ok(style)
+}
+
+fn spawn_rms_forwarder(app: AppHandle, rx: mpsc::Receiver<f32>) {
+    thread::spawn(move || {
+        while let Ok(level) = rx.recv() {
+            let _ = app.emit("rms", level);
+        }
+    });
+}
+
 /// Downloads the Whisper model in the background and loads it into memory.
 fn spawn_initialization(app: AppHandle) {
     thread::spawn(move || {
@@ -995,14 +1084,12 @@ fn spawn_initialization(app: AppHandle) {
             Err(e) => tracing::error!("whisper init failed: {:?}", e),
         }
 
-        if let Some(ctx) = app.try_state::<AppContext>() {
-            let app_warm = app.clone();
-            thread::spawn(move || {
-                if let Some(ctx) = app_warm.try_state::<AppContext>() {
-                    ctx.cleaner.warmup();
-                }
-            });
-        }
+        let app_warm = app.clone();
+        thread::spawn(move || {
+            if let Some(ctx) = app_warm.try_state::<AppContext>() {
+                ctx.cleaner.warmup();
+            }
+        });
     });
 }
 
