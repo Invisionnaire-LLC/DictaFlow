@@ -24,9 +24,13 @@ use tauri::{
     image::Image,
     menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    ActivationPolicy, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent,
-    Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, RunEvent, Runtime, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
+
+// macOS-only: gate the import so non-macOS targets (e.g. Windows) still compile.
+#[cfg(target_os = "macos")]
+use tauri::ActivationPolicy;
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
