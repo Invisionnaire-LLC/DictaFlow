@@ -224,9 +224,18 @@
     <hr />
 
     <div class="section">
-      <h1 style="margin-top: 18px">HUD Position</h1>
-      <div class="sub">The floating pill that shows recording state. Click Edit, drag the pill to a new spot, then Save.</div>
+      <h1 style="margin-top: 18px">HUD</h1>
+      <div class="sub">The floating indicator that shows recording state. Pick a style, then drag it where you want.</div>
 
+      <div class="row">
+        <label>Style</label>
+        <select id="hudStyle" class="combo">
+          <option value="classic">Classic — bottom pill + waveform</option>
+          <option value="notch">Notch — top minimal bar</option>
+        </select>
+      </div>
+
+      <div id="hudStyleMsg" class="msg"></div>
       <div id="hudMsg" class="msg"></div>
 
       <div class="inline-actions">
@@ -262,6 +271,8 @@
     const hudSaveBtn = document.getElementById("hudSave");
     const hudCancelBtn = document.getElementById("hudCancel");
     const hudMsgEl = document.getElementById("hudMsg");
+    const hudStyleEl = document.getElementById("hudStyle");
+    const hudStyleMsgEl = document.getElementById("hudStyleMsg");
 
     let pending = null;
     let currentOllamaModel = "";
@@ -561,7 +572,30 @@
       invoke("open_microphone_settings").catch(() => {});
     });
 
-    // --- HUD position ---
+    // --- HUD ---
+
+    async function loadHudStyle() {
+      try {
+        hudStyleEl.value = await invoke("get_hud_style");
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadHudStyle();
+
+    hudStyleEl.addEventListener("change", async () => {
+      hudStyleMsgEl.textContent = "";
+      hudStyleMsgEl.className = "msg";
+      try {
+        const saved = await invoke("set_hud_style", { style: hudStyleEl.value });
+        hudStyleEl.value = saved;
+        hudStyleMsgEl.textContent = saved === "notch" ? "Notch style." : "Classic style.";
+        hudStyleMsgEl.className = "msg ok";
+      } catch (err) {
+        hudStyleMsgEl.textContent = String(err);
+        hudStyleMsgEl.className = "msg err";
+      }
+    });
 
     function setHudEditing(editing) {
       hudEditBtn.style.display = editing ? "none" : "";
