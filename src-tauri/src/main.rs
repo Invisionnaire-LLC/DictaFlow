@@ -23,7 +23,7 @@ use tauri::{
     menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
     ActivationPolicy, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime,
-    WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -489,6 +489,101 @@ fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
 #[cfg(not(target_os = "macos"))]
 fn set_hud_draggable(_window: &tauri::WebviewWindow, _draggable: bool) {}
 
+#[cfg(target_os = "macos")]
+fn activate_application() {
+    use cocoa::base::{id, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let ns_app: id = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![ns_app, activateIgnoringOtherApps: YES];
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn order_window_front(window: &WebviewWindow) {
+    use cocoa::base::{id, nil};
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_window = match window.ns_window() {
+        Ok(ptr) => ptr as id,
+        Err(e) => {
+            tracing::warn!("could not access NSWindow for focus: {:?}", e);
+            return;
+        }
+    };
+    if ns_window.is_null() {
+        return;
+    }
+    unsafe {
+        let _: () = msg_send![ns_window, makeKeyAndOrderFront: nil];
+    }
+}
+
+fn auxiliary_windows_visible(app: &AppHandle) -> bool {
+    ["settings", "about"].iter().any(|label| {
+        app.get_webview_window(label)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false)
+    })
+}
+
+fn restore_menu_bar_activation_policy(app: &AppHandle) {
+    if auxiliary_windows_visible(app) {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    }
+}
+
+fn present_auxiliary_window(app: &AppHandle, window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(ActivationPolicy::Regular);
+        activate_application();
+    }
+    let _ = window.unminimize();
+    let _ = window.show();
+    #[cfg(target_os = "macos")]
+    order_window_front(window);
+    let _ = window.set_focus();
+}
+
+fn open_auxiliary_window(
+    app: &AppHandle,
+    label: &str,
+    url: &str,
+    title: &str,
+    width: f64,
+    height: f64,
+) -> tauri::Result<()> {
+    if let Some(existing) = app.get_webview_window(label) {
+        present_auxiliary_window(app, &existing);
+        return Ok(());
+    }
+
+    let app_for_close = app.clone();
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
+        .title(title)
+        .inner_size(width, height)
+        .resizable(false)
+        .minimizable(false)
+        .maximizable(false)
+        .center()
+        .build()?;
+
+    window.on_window_event(move |event| {
+        if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+            restore_menu_bar_activation_policy(&app_for_close);
+        }
+    });
+
+    present_auxiliary_window(app, &window);
+    Ok(())
+}
+
 fn position_hud(window: &tauri::WebviewWindow) {
     let saved = settings::Settings::load().hud_position;
     if let Some(pos) = saved {
@@ -511,35 +606,18 @@ fn position_hud(window: &tauri::WebviewWindow) {
 }
 
 fn show_about(app: AppHandle) -> tauri::Result<()> {
-    if let Some(existing) = app.get_webview_window("about") {
-        existing.set_focus().ok();
-        existing.show().ok();
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(&app, "about", WebviewUrl::App("about.html".into()))
-        .title("About DictaFlow")
-        .inner_size(420.0, 300.0)
-        .resizable(false)
-        .minimizable(false)
-        .maximizable(false)
-        .build()?;
-    Ok(())
+    open_auxiliary_window(&app, "about", "about.html", "About DictaFlow", 420.0, 300.0)
 }
 
 fn show_settings(app: AppHandle) -> tauri::Result<()> {
-    if let Some(existing) = app.get_webview_window("settings") {
-        existing.set_focus().ok();
-        existing.show().ok();
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("DictaFlow Settings")
-        .inner_size(520.0, 820.0)
-        .resizable(false)
-        .minimizable(false)
-        .maximizable(false)
-        .build()?;
-    Ok(())
+    open_auxiliary_window(
+        &app,
+        "settings",
+        "settings.html",
+        "DictaFlow Settings",
+        520.0,
+        820.0,
+    )
 }
 
 #[tauri::command]
@@ -666,6 +744,7 @@ fn close_settings(app: AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.close();
     }
+    restore_menu_bar_activation_policy(&app);
 }
 
 #[tauri::command]
