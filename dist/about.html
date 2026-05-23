@@ -16,6 +16,17 @@
       padding: 28px 32px;
       max-width: 360px;
     }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .brand img {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+    }
     h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 600; }
     .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 20px; }
     dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; font-size: 13px; }
@@ -34,11 +45,14 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>DictaFlow</h1>
+    <div class="brand">
+      <img src="invisionnaire.png" alt="Invisionnaire" />
+      <h1>DictaFlow</h1>
+    </div>
     <div class="sub">0.1.0 · by Invisionnaire</div>
     <dl>
       <dt>Transcription</dt><dd>whisper-rs · large-v3-turbo</dd>
-      <dt>Cleanup</dt><dd>Rules + Ollama · gemma3:1b</dd>
+      <dt>Cleanup</dt><dd>Rules + Ollama · <span id="ollamaModel">gemma3:1b</span></dd>
       <dt>Hotkey</dt><dd>Hold F9 to dictate</dd>
       <dt>Paste</dt><dd>Clipboard + Ctrl/Cmd+V</dd>
       <dt>Platform</dt><dd>Windows · macOS</dd>
@@ -47,5 +61,15 @@
       Local-first. All transcription and cleanup runs on your machine.
     </div>
   </div>
+  <script>
+    const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+    if (invoke) {
+      invoke("get_ollama_model")
+        .then((model) => {
+          document.getElementById("ollamaModel").textContent = model;
+        })
+        .catch(() => {});
+    }
+  </script>
 </body>
 </html>

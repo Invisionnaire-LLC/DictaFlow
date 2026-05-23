@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Hotkey {
     pub code: String,
@@ -41,6 +43,10 @@ pub struct Settings {
     pub hotkey: Option<Hotkey>,
     #[serde(default)]
     pub hud_position: Option<HudPosition>,
+    #[serde(default)]
+    pub ollama_model: Option<String>,
+    #[serde(default)]
+    pub launch_at_login: bool,
 }
 
 impl Settings {
