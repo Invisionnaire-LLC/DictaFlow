@@ -12,10 +12,22 @@ pub struct HybridCleaner {
 }
 
 impl HybridCleaner {
-    pub fn new(llm_timeout: Duration) -> Self {
+    pub fn new(llm_timeout: Duration, model: String) -> Self {
         HybridCleaner {
-            ollama: OllamaCleaner::new(llm_timeout),
+            ollama: OllamaCleaner::new(llm_timeout, model),
         }
+    }
+
+    pub fn ollama_model(&self) -> String {
+        self.ollama.model()
+    }
+
+    pub fn set_ollama_model(&self, model: String) {
+        self.ollama.set_model(model);
+    }
+
+    pub fn list_ollama_models(&self) -> anyhow::Result<Vec<ollama::OllamaModel>> {
+        self.ollama.list_models()
     }
 
     pub fn clean(&self, raw: &str) -> String {

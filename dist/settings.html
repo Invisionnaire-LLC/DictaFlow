@@ -19,6 +19,13 @@
     .section:last-of-type { margin-bottom: 0; }
     .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     label { color: #9a9aa0; font-size: 12px; min-width: 64px; }
+    .check-row { align-items: center; min-height: 34px; }
+    .check-row label { flex: 1; min-width: 0; color: #e8e8ec; font-size: 13px; }
+    input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #1976d2;
+    }
     .combo {
       flex: 1;
       padding: 9px 12px;
@@ -33,6 +40,15 @@
     .combo.recording {
       border-color: #64b5f6;
       background: #1c2a3a;
+    }
+    select.combo {
+      height: 38px;
+      font-family: ui-monospace, Menlo, monospace;
+      appearance: none;
+    }
+    input.combo {
+      box-sizing: border-box;
+      min-width: 0;
     }
     button {
       padding: 7px 13px;
@@ -90,6 +106,40 @@
     <hr />
 
     <div class="section">
+      <h1 style="margin-top: 18px">Cleanup</h1>
+      <div class="sub">Choose the local Ollama model used after rules cleanup.</div>
+
+      <div class="row">
+        <label>Model</label>
+        <input id="ollamaModel" class="combo" list="ollamaModels" spellcheck="false" placeholder="gemma3:1b" />
+        <datalist id="ollamaModels"></datalist>
+      </div>
+
+      <div id="ollamaMsg" class="msg"></div>
+
+      <div class="inline-actions">
+        <button id="ollamaSave" class="primary" disabled>Save model</button>
+        <button id="ollamaRefresh">Refresh models</button>
+      </div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <h1 style="margin-top: 18px">System</h1>
+      <div class="sub">macOS startup behavior.</div>
+
+      <div class="row check-row">
+        <input id="launchAtLogin" type="checkbox" />
+        <label for="launchAtLogin">Open DictaFlow at login</label>
+      </div>
+
+      <div id="loginMsg" class="msg"></div>
+    </div>
+
+    <hr />
+
+    <div class="section">
       <h1 style="margin-top: 18px">Permissions (macOS)</h1>
       <div class="sub">DictaFlow needs Accessibility to paste at your cursor, and Microphone to record.</div>
 
@@ -141,6 +191,13 @@
     const hkMsgEl = document.getElementById("hkMsg");
     const saveBtn = document.getElementById("save");
     const closeBtn = document.getElementById("close");
+    const ollamaModelEl = document.getElementById("ollamaModel");
+    const ollamaModelsEl = document.getElementById("ollamaModels");
+    const ollamaMsgEl = document.getElementById("ollamaMsg");
+    const ollamaSaveBtn = document.getElementById("ollamaSave");
+    const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
+    const launchAtLoginEl = document.getElementById("launchAtLogin");
+    const loginMsgEl = document.getElementById("loginMsg");
 
     const hudEditBtn = document.getElementById("hudEdit");
     const hudSaveBtn = document.getElementById("hudSave");
@@ -148,6 +205,7 @@
     const hudMsgEl = document.getElementById("hudMsg");
 
     let pending = null;
+    let currentOllamaModel = "";
 
     function displayHotkey(h) {
       if (!h || !h.code) return "—";
@@ -166,6 +224,84 @@
       }
     }
     loadCurrent();
+
+    function formatBytes(bytes) {
+      if (!bytes) return "";
+      const units = ["B", "KB", "MB", "GB"];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+    }
+
+    function setOllamaMessage(text, kind = "") {
+      ollamaMsgEl.textContent = text;
+      ollamaMsgEl.className = kind ? `msg ${kind}` : "msg";
+    }
+
+    async function loadOllamaModels() {
+      ollamaModelEl.disabled = true;
+      ollamaSaveBtn.disabled = true;
+      ollamaModelEl.placeholder = "Loading…";
+      setOllamaMessage("");
+      try {
+        const [current, models] = await Promise.all([
+          invoke("get_ollama_model"),
+          invoke("list_ollama_models"),
+        ]);
+        currentOllamaModel = current;
+        ollamaModelEl.value = current;
+        ollamaModelsEl.innerHTML = "";
+        const names = new Set(["gemma3:1b"]);
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "gemma3:1b";
+        defaultOpt.label = "gemma3:1b (DictaFlow default)";
+        ollamaModelsEl.appendChild(defaultOpt);
+        for (const model of models) {
+          if (names.has(model.name)) continue;
+          names.add(model.name);
+          const opt = document.createElement("option");
+          opt.value = model.name;
+          const size = formatBytes(model.size);
+          opt.label = size ? `${model.name} (${size})` : model.name;
+          ollamaModelsEl.appendChild(opt);
+        }
+        if (current && !names.has(current)) {
+          setOllamaMessage(`Current: ${current} (manual model)`, "");
+        } else if (!models.length) {
+          setOllamaMessage("Using DictaFlow default. You can also type any Ollama model name manually.", "ok");
+        } else {
+          setOllamaMessage(`Current: ${current}`, "ok");
+        }
+        ollamaModelEl.disabled = false;
+        ollamaSaveBtn.disabled = true;
+      } catch (err) {
+        const current = await invoke("get_ollama_model").catch(() => "");
+        currentOllamaModel = current;
+        ollamaModelEl.value = current;
+        ollamaModelEl.disabled = false;
+        ollamaSaveBtn.disabled = true;
+        setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
+      }
+    }
+    loadOllamaModels();
+
+    function setLoginMessage(text, kind = "") {
+      loginMsgEl.textContent = text;
+      loginMsgEl.className = kind ? `msg ${kind}` : "msg";
+    }
+
+    async function loadLaunchAtLogin() {
+      try {
+        launchAtLoginEl.checked = await invoke("get_launch_at_login");
+      } catch (err) {
+        setLoginMessage(String(err), "err");
+      }
+    }
+    loadLaunchAtLogin();
 
     const MODIFIER_CODES = new Set([
       "ControlLeft", "ControlRight",
@@ -229,6 +365,46 @@
         hkMsgEl.textContent = String(err);
         hkMsgEl.className = "msg err";
         saveBtn.disabled = false;
+      }
+    });
+
+    ollamaModelEl.addEventListener("input", () => {
+      const value = ollamaModelEl.value.trim();
+      ollamaSaveBtn.disabled = value === currentOllamaModel || !value;
+      setOllamaMessage(
+        value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
+        value === currentOllamaModel ? "ok" : ""
+      );
+    });
+
+    ollamaSaveBtn.addEventListener("click", async () => {
+      ollamaSaveBtn.disabled = true;
+      setOllamaMessage("");
+      try {
+        const saved = await invoke("set_ollama_model", { model: ollamaModelEl.value.trim() });
+        currentOllamaModel = saved;
+        ollamaModelEl.value = saved;
+        setOllamaMessage(`Saved: ${saved}`, "ok");
+      } catch (err) {
+        setOllamaMessage(String(err), "err");
+        ollamaSaveBtn.disabled = false;
+      }
+    });
+
+    ollamaRefreshBtn.addEventListener("click", loadOllamaModels);
+
+    launchAtLoginEl.addEventListener("change", async () => {
+      launchAtLoginEl.disabled = true;
+      setLoginMessage("");
+      try {
+        const enabled = await invoke("set_launch_at_login", { enabled: launchAtLoginEl.checked });
+        launchAtLoginEl.checked = enabled;
+        setLoginMessage(enabled ? "Enabled." : "Disabled.", "ok");
+      } catch (err) {
+        launchAtLoginEl.checked = !launchAtLoginEl.checked;
+        setLoginMessage(String(err), "err");
+      } finally {
+        launchAtLoginEl.disabled = false;
       }
     });
 

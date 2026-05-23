@@ -4,6 +4,7 @@
 mod asr;
 mod audio;
 mod cleanup;
+mod login_item;
 mod paste;
 mod settings;
 mod state;
@@ -29,7 +30,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 use crate::audio::{AudioController, PcmBuffer, MIN_DURATION_SECS};
 use crate::cleanup::HybridCleaner;
-use crate::settings::{Hotkey, HudPosition};
+use crate::settings::{Hotkey, HudPosition, DEFAULT_OLLAMA_MODEL};
 use crate::state::AppState;
 
 pub struct AppContext {
@@ -155,6 +156,11 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_hotkey,
             set_hotkey,
+            get_ollama_model,
+            list_ollama_models,
+            set_ollama_model,
+            get_launch_at_login,
+            set_launch_at_login,
             close_settings,
             hud_edit_start,
             hud_edit_save,
@@ -169,13 +175,17 @@ fn main() {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
             let (audio, level_rx) = AudioController::spawn();
-            let cleaner = HybridCleaner::new(Duration::from_millis(800));
-
             let saved = settings::Settings::load();
+            let ollama_model = saved
+                .ollama_model
+                .clone()
+                .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
+            let cleaner = HybridCleaner::new(Duration::from_millis(800), ollama_model.clone());
             audio.set_device(saved.input_device.clone());
             if let Some(d) = &saved.input_device {
                 tracing::info!("settings: using input device '{}'", d);
             }
+            tracing::info!("settings: using ollama model '{}'", ollama_model);
 
             let hotkey = saved.hotkey.clone().unwrap_or_default();
             let shortcut = match hotkey_to_shortcut(&hotkey) {
@@ -525,7 +535,7 @@ fn show_settings(app: AppHandle) -> tauri::Result<()> {
     }
     WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
         .title("DictaFlow Settings")
-        .inner_size(520.0, 720.0)
+        .inner_size(520.0, 820.0)
         .resizable(false)
         .minimizable(false)
         .maximizable(false)
@@ -587,6 +597,69 @@ fn set_hotkey(app: AppHandle, hotkey: Hotkey) -> Result<Hotkey, String> {
 
     tracing::info!("hotkey changed to: {}", hotkey.display());
     Ok(hotkey)
+}
+
+#[tauri::command]
+fn get_ollama_model(app: AppHandle) -> String {
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        return ctx.cleaner.ollama_model();
+    }
+    settings::Settings::load()
+        .ollama_model
+        .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string())
+}
+
+#[tauri::command]
+fn list_ollama_models(app: AppHandle) -> Result<Vec<cleanup::ollama::OllamaModel>, String> {
+    let ctx = app
+        .try_state::<AppContext>()
+        .ok_or_else(|| "app context missing".to_string())?;
+    ctx.cleaner
+        .list_ollama_models()
+        .map_err(|e| format!("could not list Ollama models: {}", e))
+}
+
+#[tauri::command]
+fn set_ollama_model(app: AppHandle, model: String) -> Result<String, String> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return Err("Enter an Ollama model first.".to_string());
+    }
+
+    let ctx = app
+        .try_state::<AppContext>()
+        .ok_or_else(|| "app context missing".to_string())?;
+
+    let selected = trimmed.to_string();
+    ctx.cleaner.set_ollama_model(selected.clone());
+
+    let mut saved = settings::Settings::load();
+    saved.ollama_model = Some(selected.clone());
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not persist ollama model: {:?}", e);
+    }
+
+    tracing::info!("ollama model changed to: {}", selected);
+    Ok(selected)
+}
+
+#[tauri::command]
+fn get_launch_at_login() -> bool {
+    login_item::is_enabled()
+}
+
+#[tauri::command]
+fn set_launch_at_login(enabled: bool) -> Result<bool, String> {
+    login_item::set_enabled(enabled).map_err(|e| format!("could not update login item: {}", e))?;
+
+    let mut saved = settings::Settings::load();
+    saved.launch_at_login = enabled;
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not persist launch at login: {:?}", e);
+    }
+
+    tracing::info!("launch at login changed to: {}", enabled);
+    Ok(enabled)
 }
 
 #[tauri::command]
