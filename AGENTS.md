@@ -165,13 +165,54 @@ open "/Applications/DictaFlow.app"
 
 Señal de éxito: el botón **"Re-check"** en Settings pasa a **"Granted ✓"** y el paste pega.
 
-### Defecto de firma secundario (anotar, no bloqueante)
-La build "restaurada" tiene el **signing identifier (`dictaflow-5825f1f8cf04afb5`,
-linker-signed) distinto del CFBundleIdentifier (`com.invisionnaire.dictaflow`)** y el
-`Info.plist=not bound`. Es un bundle Tauri/Rust que nunca se re-firmó de verdad. La build
-"rota" (`.broken-…`) en realidad tenía la firma **mejor** (`Identifier=com.invisionnaire.dictaflow`,
-`Info.plist entries=18`); solo "se rompió" porque al cambiar de binario cambió el cdhash y
-macOS revocó el grant viejo (más el lío de dos copias corriendo a la vez).
+### Si reemplazas la app en /Applications tras un rebuild (flujo verificado)
+
+`cargo tauri build` produce un bundle **linker-signed** con un `Identifier` autogenerado
+(`dictaflow-<hash>`) ≠ `CFBundleIdentifier`, e `Info.plist=not bound`. Si lo copias así a
+`/Applications`, el grant de Accessibility queda inconsistente y togglear no pega bien.
+**Re-firma el bundle con identidad consistente antes de usarlo.** Flujo completo que funciona:
+
+```bash
+SRC="<repo>/src-tauri/target/release/bundle/macos/DictaFlow.app"
+DST="/Applications/DictaFlow.app"
+
+# 1) Backup de la app actual (cambiar el binario revoca Accessibility)
+cp -R "$DST" "/Applications/DictaFlow.app.backup-$(date +%Y%m%d-%H%M%S)"
+
+# 2) Cerrar la instancia corriendo (hay single-instance lock: dos copias se estorban)
+osascript -e 'tell application "DictaFlow" to quit'; sleep 1
+pkill -f "/Applications/DictaFlow.app/Contents/MacOS/dictaflow"; sleep 1
+
+# 3) Reemplazar el bundle
+rm -rf "$DST"; cp -R "$SRC" "$DST"
+
+# 4) RE-FIRMAR con identifier = bundle id y sellando el Info.plist (clave para TCC)
+codesign --force --deep -s - --identifier com.invisionnaire.dictaflow "$DST"
+codesign --verify --deep --strict "$DST"   # debe decir "satisfies its Designated Requirement"
+# Tras esto: Identifier=com.invisionnaire.dictaflow, "Info.plist entries=18",
+#            "Sealed Resources" presente. Esa identidad consistente es lo que hace
+#            que el grant de Accessibility PEGUE y se MANTENGA.
+
+# 5) Resetear el grant viejo (pineado a un cdhash que ya no existe) + limpiar LaunchServices
+tccutil reset Accessibility com.invisionnaire.dictaflow
+LSREG="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+"$LSREG" -u "$SRC"; "$LSREG" -f "$DST"
+
+# 6) Abrir y (manual) Settings → Request Accessibility → activar en System Settings
+open "$DST"
+```
+
+Nota: `cargo tauri build` puede fallar en el paso del `.dmg` (`bundle_dmg.sh`) por un
+volumen DMG montado o permisos de Finder. **No importa** — el `.app` se genera antes; solo
+necesitas el `.app`.
+
+### Por qué la firma consistente importa (defecto de fondo)
+TCC graba el grant con un `csreq`. Si el `Identifier` de firma ≠ `CFBundleIdentifier` y el
+`Info.plist` no está sellado, la identidad que macOS computa para el proceso es inestable y
+el grant no valida aunque la UI lo muestre encendido. Re-firmar con
+`--identifier com.invisionnaire.dictaflow` + `--deep` (sella el Info.plist) deja una
+identidad coherente y el grant pega. La build "rota" histórica (`.broken-…`) en realidad
+tenía la firma bien; "se rompió" solo por el cambio de cdhash + dos copias corriendo a la vez.
 
 ### Arreglo de fondo (futuro)
 La fragilidad solo desaparece con **firma estable real**: un certificado **Developer ID**.
