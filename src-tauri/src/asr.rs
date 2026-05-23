@@ -28,7 +28,9 @@ impl Transcriber {
         params.use_gpu(true).flash_attn(true);
         tracing::info!(
             "whisper context: use_gpu={}, gpu_device={}, flash_attn={}",
-            params.use_gpu, params.gpu_device, params.flash_attn
+            params.use_gpu,
+            params.gpu_device,
+            params.flash_attn
         );
         let ctx = WhisperContext::new_with_params(
             model_path
@@ -77,7 +79,9 @@ impl Transcriber {
         let n_segments = state.full_n_segments();
         let mut out = String::new();
         for i in 0..n_segments {
-            let seg = state.get_segment(i).ok_or_else(|| anyhow!("segment {} missing", i))?;
+            let seg = state
+                .get_segment(i)
+                .ok_or_else(|| anyhow!("segment {} missing", i))?;
             let text = seg.to_str().context("segment text")?;
             out.push_str(text);
         }
@@ -133,14 +137,22 @@ fn seed_vocabulary_if_missing() {
 
 fn load_vocabulary() -> String {
     match vocabulary_path() {
-        Some(path) => fs::read_to_string(&path).unwrap_or_default().trim().to_string(),
+        Some(path) => fs::read_to_string(&path)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
         None => String::new(),
     }
 }
 
 pub fn is_model_downloaded() -> bool {
     match model_path() {
-        Ok(p) => p.exists() && p.metadata().map(|m| m.len() > 1_000_000_000).unwrap_or(false),
+        Ok(p) => {
+            p.exists()
+                && p.metadata()
+                    .map(|m| m.len() > 1_000_000_000)
+                    .unwrap_or(false)
+        }
         Err(_) => false,
     }
 }

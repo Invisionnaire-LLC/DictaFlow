@@ -7,13 +7,7 @@ use serde::{Deserialize, Serialize};
 pub const MODEL_NAME: &str = "gemma3:1b";
 pub const ENDPOINT: &str = "http://127.0.0.1:11434/api/generate";
 
-const COLON_TAIL_PREAMBLES: &[&str] = &[
-    "Here is the",
-    "Here's the",
-    "Here is",
-    "Here's",
-    "Sure,",
-];
+const COLON_TAIL_PREAMBLES: &[&str] = &["Here is the", "Here's the", "Here is", "Here's", "Sure,"];
 const FULL_PREAMBLES: &[&str] = &["Output:", "Cleaned:"];
 
 const PROMPT_HEADER: &str = "You are a literal text editor. Fix only obvious typos, missing \

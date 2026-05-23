@@ -143,7 +143,9 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
         sample_format
     );
 
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(sample_rate as usize * 10)));
+    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(
+        sample_rate as usize * 10,
+    )));
     let err_fn = |err| tracing::error!("audio stream error: {}", err);
     let stream_config = config.config();
     let ch = channels as usize;
@@ -188,10 +190,10 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
                 move |data: &[u16], _| {
                     let mut guard = buf.lock();
                     let before = guard.len();
-                    guard.extend(
-                        data.iter()
-                            .map(|&s| (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)),
-                    );
+                    guard
+                        .extend(data.iter().map(|&s| {
+                            (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
+                        }));
                     let level = rms(&guard[before..]);
                     drop(guard);
                     let _ = ltx.send(level);
@@ -326,7 +328,11 @@ pub fn resample_linear(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32
         let idx = src_pos as usize;
         let frac = (src_pos - idx as f64) as f32;
         let a = samples[idx];
-        let b = if idx + 1 < samples.len() { samples[idx + 1] } else { a };
+        let b = if idx + 1 < samples.len() {
+            samples[idx + 1]
+        } else {
+            a
+        };
         out.push(a + (b - a) * frac);
     }
     out
