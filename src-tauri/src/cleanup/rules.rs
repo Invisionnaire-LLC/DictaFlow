@@ -46,9 +46,8 @@ static FILLER_REGEX: Lazy<Regex> = Lazy::new(|| {
 static WS_BEFORE_PUNCT: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+([.,?!;:])").unwrap());
 static MULTIPLE_SPACES: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t]{2,}").unwrap());
 static LEADING_WS_ON_LINE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(^|\n)[ \t]+").unwrap());
-static REPEATED_WORDS: Lazy<fancy_regex::Regex> = Lazy::new(|| {
-    fancy_regex::Regex::new(r"(?i)\b(\w+)( +\1\b)+").unwrap()
-});
+static REPEATED_WORDS: Lazy<fancy_regex::Regex> =
+    Lazy::new(|| fancy_regex::Regex::new(r"(?i)\b(\w+)( +\1\b)+").unwrap());
 static STANDALONE_I: Lazy<Regex> = Lazy::new(|| Regex::new(r"\bi\b").unwrap());
 
 const TERMINAL_PUNCT: &[char] = &['.', '!', '?'];
@@ -93,15 +92,13 @@ pub fn capitalize_sentences(text: &str) -> String {
     }
     let mut out: Vec<char> = text.chars().collect();
     let mut capitalize_next = true;
-    for i in 0..out.len() {
-        let ch = out[i];
+    for ch in &mut out {
         if capitalize_next && ch.is_alphabetic() {
-            for uc in ch.to_uppercase() {
-                out[i] = uc;
-                break;
+            if let Some(uc) = ch.to_uppercase().next() {
+                *ch = uc;
             }
             capitalize_next = false;
-        } else if TERMINAL_PUNCT.contains(&ch) || ch == '\n' {
+        } else if TERMINAL_PUNCT.contains(ch) || *ch == '\n' {
             capitalize_next = true;
         } else if !ch.is_whitespace() {
             capitalize_next = false;
@@ -147,10 +144,7 @@ mod tests {
 
     #[test]
     fn repeated_words_collapsed() {
-        assert_eq!(
-            apply("the the quick brown fox"),
-            "The quick brown fox."
-        );
+        assert_eq!(apply("the the quick brown fox"), "The quick brown fox.");
     }
 
     #[test]
@@ -171,10 +165,7 @@ mod tests {
 
     #[test]
     fn capitalize_after_period() {
-        assert_eq!(
-            apply("hello. how are you"),
-            "Hello. How are you."
-        );
+        assert_eq!(apply("hello. how are you"), "Hello. How are you.");
     }
 
     #[test]

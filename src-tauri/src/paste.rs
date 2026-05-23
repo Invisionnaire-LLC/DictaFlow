@@ -67,4 +67,3 @@ fn synth_paste() -> Result<()> {
     enigo.key(modifier, Direction::Release)?;
     Ok(())
 }
-

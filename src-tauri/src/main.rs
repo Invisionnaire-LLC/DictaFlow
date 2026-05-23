@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![allow(unexpected_cfgs)]
 
 mod asr;
 mod audio;
@@ -13,14 +14,14 @@ use std::thread;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use std::str::FromStr;
 use tauri::{
     image::Image,
     menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime, WebviewUrl,
-    WebviewWindowBuilder, WindowEvent,
+    ActivationPolicy, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Runtime,
+    WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
-use std::str::FromStr;
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -133,6 +134,9 @@ fn main() {
             open_microphone_settings
         ])
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(ActivationPolicy::Accessory);
+
             let (audio, level_rx) = AudioController::spawn();
             let cleaner = HybridCleaner::new(Duration::from_millis(800));
 
@@ -162,7 +166,10 @@ fn main() {
             app.manage(ctx);
 
             app.global_shortcut().register(shortcut)?;
-            tracing::info!("registered global shortcut: {} (hold to dictate)", hotkey.display());
+            tracing::info!(
+                "registered global shortcut: {} (hold to dictate)",
+                hotkey.display()
+            );
 
             build_tray(app.handle())?;
             build_hud(app.handle())?;
@@ -176,7 +183,10 @@ fn main() {
         .expect("tauri run failed");
 }
 
-fn build_menu<R: Runtime>(app: &AppHandle<R>, current_device: Option<&str>) -> tauri::Result<Menu<R>> {
+fn build_menu<R: Runtime>(
+    app: &AppHandle<R>,
+    current_device: Option<&str>,
+) -> tauri::Result<Menu<R>> {
     let about_item = MenuItem::with_id(app, "about", "About DictaFlow", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -211,11 +221,20 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, current_device: Option<&str>) -> t
     for item in &device_items {
         mic_items.push(item);
     }
-    let mic_submenu = Submenu::with_id_and_items(app, "mic_submenu", "Microphone", true, &mic_items)?;
+    let mic_submenu =
+        Submenu::with_id_and_items(app, "mic_submenu", "Microphone", true, &mic_items)?;
 
     Menu::with_items(
         app,
-        &[&about_item, &sep1, &mic_submenu, &sep2, &settings_item, &sep3, &quit_item],
+        &[
+            &about_item,
+            &sep1,
+            &mic_submenu,
+            &sep2,
+            &settings_item,
+            &sep3,
+            &quit_item,
+        ],
     )
 }
 
@@ -251,7 +270,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 "quit" => app.exit(0),
                 id if id.starts_with("mic:") => {
                     let name = &id["mic:".len()..];
-                    let selection = if name == "default" { None } else { Some(name.to_string()) };
+                    let selection = if name == "default" {
+                        None
+                    } else {
+                        Some(name.to_string())
+                    };
                     if let Some(ctx) = app.try_state::<AppContext>() {
                         ctx.audio.set_device(selection.clone());
                     }
@@ -330,7 +353,7 @@ extern "C" {
 fn check_accessibility() -> bool {
     #[cfg(target_os = "macos")]
     unsafe {
-        return AXIsProcessTrusted();
+        AXIsProcessTrusted()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -348,9 +371,7 @@ fn prompt_accessibility() -> bool {
         let key = CFString::from_static_string("AXTrustedCheckOptionPrompt");
         let value = CFBoolean::true_value();
         let dict = CFDictionary::from_CFType_pairs(&[(key, value)]);
-        unsafe {
-            return AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef() as *const _);
-        }
+        unsafe { AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef() as *const _) }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -379,6 +400,7 @@ fn open_microphone_settings() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
 fn raise_hud_level(window: &tauri::WebviewWindow) {
     use cocoa::base::id;
     use objc::{msg_send, sel, sel_impl};
@@ -401,6 +423,7 @@ fn raise_hud_level(window: &tauri::WebviewWindow) {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
 fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
     use cocoa::base::{id, BOOL, NO, YES};
     use objc::{msg_send, sel, sel_impl};
@@ -556,10 +579,7 @@ fn hud_edit_save(app: AppHandle) -> Result<HudPosition, String> {
     let pos = hud
         .outer_position()
         .map_err(|e| format!("read hud position: {}", e))?;
-    let hud_pos = HudPosition {
-        x: pos.x,
-        y: pos.y,
-    };
+    let hud_pos = HudPosition { x: pos.x, y: pos.y };
     let mut saved = settings::Settings::load();
     saved.hud_position = Some(hud_pos);
     saved.save().map_err(|e| format!("save: {}", e))?;
