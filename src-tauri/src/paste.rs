@@ -5,7 +5,17 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+
+#[cfg(target_os = "macos")]
+pub fn read_focused_field_text(target_pid: Option<i32>) -> Option<String> {
+    macos::read_focused_text(target_pid)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn read_focused_field_text(_target_pid: Option<i32>) -> Option<String> {
+    None
+}
 
 pub fn paste(app: &AppHandle, text: &str, target_pid: Option<i32>) -> Result<()> {
     let text = text.to_string();
@@ -62,7 +72,7 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
         let before = macos::read_focused_text(target_pid);
 
         // Only use AX when we can confirm text landed (Cursor, Notes, etc.).
-        // Never stop on Unverified — that broke Electron apps like Telegram.
+        // Never stop on Unverified. That broke Electron apps like Telegram.
         if macos::try_ax_insert_text(text, target_pid)
             && macos::measure_paste_outcome(text, before.as_deref(), target_pid)
                 == PasteOutcome::Confirmed
@@ -159,6 +169,68 @@ fn classify_paste_result(
     }
 
     PasteOutcome::Confirmed
+}
+
+pub fn try_learn_from_field_edit(
+    pasted: &str,
+    before: Option<&str>,
+    after: &str,
+) -> Result<Vec<crate::dictionary::LearnedUpdate>> {
+    let pasted = pasted.trim();
+    let after = after.trim();
+    if pasted.is_empty() || after.is_empty() || pasted == after {
+        return Ok(Vec::new());
+    }
+
+    if after.contains(pasted) {
+        return Ok(Vec::new());
+    }
+
+    if let Some(before) = before.map(str::trim).filter(|s| !s.is_empty()) {
+        if after.starts_with(before) {
+            let suffix = after[before.len()..].trim();
+            if !suffix.is_empty() && suffix != pasted {
+                return crate::dictionary::learn_from_edit(pasted, suffix);
+            }
+        }
+    }
+
+    crate::dictionary::learn_from_edit(pasted, after)
+}
+
+pub fn spawn_edit_learning_watch(
+    app: AppHandle,
+    pasted: String,
+    before: Option<String>,
+    target_pid: Option<i32>,
+) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1200));
+        let mut stable: Option<String> = None;
+        for _ in 0..24 {
+            let current = read_focused_field_text(target_pid);
+            if let Some(field) = current {
+                let trimmed = field.trim().to_string();
+                if stable.as_deref() == Some(trimmed.as_str()) {
+                    if let Ok(learned) =
+                        try_learn_from_field_edit(&pasted, before.as_deref(), &trimmed)
+                    {
+                        for update in learned {
+                            tracing::info!(
+                                "learned replacement: {} -> {}",
+                                update.from,
+                                update.to
+                            );
+                            let _ = app.emit("word_learned", update);
+                        }
+                    }
+                    return;
+                }
+                stable = Some(trimmed);
+            }
+            thread::sleep(Duration::from_millis(400));
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -317,7 +389,7 @@ mod macos {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_paste_result, PasteOutcome};
+    use super::{classify_paste_result, try_learn_from_field_edit, PasteOutcome};
 
     #[test]
     fn confirmed_when_text_appears() {
@@ -341,5 +413,17 @@ mod tests {
             classify_paste_result("hello", Some("hello"), Some("hello")),
             PasteOutcome::Failed
         );
+    }
+
+    #[test]
+    fn learns_suffix_after_prefix() {
+        let learned = try_learn_from_field_edit(
+            "Talk to Mackenzie today",
+            Some("Hello. "),
+            "Hello. Talk to McKenzie today",
+        )
+        .unwrap();
+        assert_eq!(learned.len(), 1);
+        assert_eq!(learned[0].from, "Mackenzie");
     }
 }

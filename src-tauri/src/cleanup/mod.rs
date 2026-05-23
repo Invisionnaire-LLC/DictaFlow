@@ -32,6 +32,7 @@ impl HybridCleaner {
 
     pub fn clean(&self, raw: &str) -> String {
         let rules_output = rules::apply(raw);
+        let rules_output = crate::dictionary::apply_replacements(&rules_output);
         if should_skip_llm(raw, &rules_output) {
             tracing::debug!("hybrid source=rules_only in={}", rules_output.len());
             return rules_output;

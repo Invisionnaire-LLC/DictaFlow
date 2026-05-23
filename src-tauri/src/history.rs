@@ -74,6 +74,18 @@ pub fn delete(id: &str) -> Result<bool> {
     Ok(true)
 }
 
+pub fn update_cleaned(id: &str, cleaned: &str) -> Result<Option<(String, HistoryEntry)>> {
+    let mut entries = load_all()?;
+    let Some(entry) = entries.iter_mut().find(|e| e.id == id) else {
+        return Ok(None);
+    };
+    let before = entry.cleaned.clone();
+    entry.cleaned = cleaned.to_string();
+    let updated = entry.clone();
+    save_all(&entries)?;
+    Ok(Some((before, updated)))
+}
+
 pub fn clear_all() -> Result<()> {
     let path = history_path().ok_or_else(|| anyhow!("no history path"))?;
     if path.exists() {

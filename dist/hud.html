@@ -262,6 +262,18 @@
       await listen('hud_style', (e) => {
         body.dataset.style = String(e.payload) === 'classic' ? 'classic' : 'notch';
       });
+      await listen('word_learned', (e) => {
+        const item = e.payload || {};
+        if (!item.from || !item.to) return;
+        setPreview(`Learned: ${item.from} → ${item.to}`);
+        body.dataset.layout = 'expanded';
+        setTimeout(() => {
+          if (body.dataset.state === 'idle') {
+            body.dataset.layout = 'compact';
+            setPreview('');
+          }
+        }, 2500);
+      });
       if (window.__TAURI__?.core?.invoke) {
         try {
           body.dataset.style = await window.__TAURI__.core.invoke('get_hud_style');

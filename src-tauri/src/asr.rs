@@ -106,8 +106,13 @@ impl Transcriber {
             // Vocabulary prompt helps final transcription but can leak into live preview.
         } else {
             params.set_single_segment(false);
-            if !self.vocabulary.is_empty() {
-                params.set_initial_prompt(&self.vocabulary);
+            let vocab = crate::dictionary::whisper_prompt();
+            if vocab.is_empty() {
+                if !self.vocabulary.is_empty() {
+                    params.set_initial_prompt(&self.vocabulary);
+                }
+            } else {
+                params.set_initial_prompt(&vocab);
             }
         }
 

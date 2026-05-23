@@ -4,6 +4,7 @@
 mod asr;
 mod audio;
 mod cleanup;
+mod dictionary;
 mod history;
 mod login_item;
 mod paste;
@@ -36,6 +37,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 use crate::audio::{AudioController, PcmBuffer, MIN_DURATION_SECS};
 use crate::cleanup::HybridCleaner;
+use crate::dictionary::LearnedUpdate;
 use crate::settings::{Hotkey, HudAnchor, HudPosition, DEFAULT_OLLAMA_MODEL};
 use crate::state::AppState;
 
@@ -215,6 +217,9 @@ fn main() {
             delete_history_entry,
             clear_history,
             copy_text,
+            update_history_entry,
+            list_dictionary,
+            delete_dictionary_entry,
             get_hud_style,
             set_hud_style,
             get_live_transcript,
@@ -364,7 +369,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .icon(tray_icon_image())
         .icon_as_template(true)
         .tooltip(format!(
-            "DictaFlow — hold or tap {} to dictate",
+            "DictaFlow: hold or tap {} to dictate",
             hotkey_label
         ))
         .menu(&menu)
@@ -1152,6 +1157,32 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn update_history_entry(app: AppHandle, id: String, cleaned: String) -> Result<Vec<LearnedUpdate>, String> {
+    let cleaned = cleaned.trim().to_string();
+    if cleaned.is_empty() {
+        return Err("text cannot be empty".into());
+    }
+    let (before, _updated) = history::update_cleaned(&id, &cleaned)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "history entry not found".to_string())?;
+    let learned = dictionary::learn_from_edit(&before, &cleaned).map_err(|e| e.to_string())?;
+    for update in &learned {
+        let _ = app.emit("word_learned", update);
+    }
+    Ok(learned)
+}
+
+#[tauri::command]
+fn list_dictionary() -> Result<Vec<dictionary::Replacement>, String> {
+    Ok(dictionary::list_replacements())
+}
+
+#[tauri::command]
+fn delete_dictionary_entry(from: String) -> Result<bool, String> {
+    dictionary::delete_replacement(&from).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn close_history(app: AppHandle) {
     if let Some(w) = app.get_webview_window("history") {
         let _ = w.close();
@@ -1206,7 +1237,7 @@ fn set_hotkey(app: AppHandle, hotkey: Hotkey) -> Result<Hotkey, String> {
 
     if let Some(tray) = app.tray_by_id("main") {
         let _ = tray.set_tooltip(Some(format!(
-            "DictaFlow — hold or tap {} to dictate",
+            "DictaFlow: hold or tap {} to dictate",
             hotkey.display()
         )));
     }
@@ -1566,12 +1597,21 @@ fn finish_recording(app: AppHandle) {
             .map(|ctx| *ctx.paste_target_pid.lock())
             .unwrap_or(None);
 
+        let before_field = paste::read_focused_field_text(target_pid);
+
         if let Err(e) = paste::paste(&app_clone, &cleaned, target_pid) {
             tracing::error!("paste: {:?}", e);
             set_state(&app_clone, AppState::Error);
             reset_to_idle_soon(app_clone.clone());
             return;
         }
+
+        paste::spawn_edit_learning_watch(
+            app_clone.clone(),
+            cleaned.clone(),
+            before_field,
+            target_pid,
+        );
 
         if let Some(ctx) = app_clone.try_state::<AppContext>() {
             *ctx.paste_target_pid.lock() = None;

@@ -62,8 +62,21 @@
       font-size: 14px;
       line-height: 1.45;
       margin-bottom: 6px;
-      white-space: pre-wrap;
-      word-break: break-word;
+    }
+    .entry-edit {
+      width: 100%;
+      min-height: 72px;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 14px;
+      line-height: 1.45;
+      resize: vertical;
+      margin-bottom: 8px;
+      font-family: inherit;
     }
     .entry-raw {
       font-size: 12px;
@@ -88,7 +101,7 @@
 <body>
   <div class="wrap">
     <h1>History</h1>
-    <div class="sub">Search past dictations by raw or cleaned text.</div>
+    <div class="sub">Search past dictations. Edit cleaned text to teach DictaFlow new words.</div>
 
     <div class="toolbar">
       <input id="search" type="search" placeholder="Search history…" autocomplete="off" />
@@ -143,9 +156,10 @@
             <span class="entry-time">${escapeHtml(formatTime(e.created_at))}</span>
             <span class="entry-dur">${e.duration_secs.toFixed(1)}s</span>
           </div>
-          <div class="entry-cleaned">${escapeHtml(e.cleaned)}</div>
+          <textarea class="entry-edit" data-id="${escapeHtml(e.id)}">${escapeHtml(e.cleaned)}</textarea>
           ${e.raw !== e.cleaned ? `<div class="entry-raw">${escapeHtml(e.raw)}</div>` : ''}
           <div class="entry-actions">
+            <button data-action="save-learn" data-id="${escapeHtml(e.id)}">Save and learn</button>
             <button data-action="copy-cleaned" data-id="${escapeHtml(e.id)}">Copy cleaned</button>
             <button data-action="copy-raw" data-id="${escapeHtml(e.id)}">Copy raw</button>
             <button data-action="delete" data-id="${escapeHtml(e.id)}" class="danger">Delete</button>
@@ -178,7 +192,17 @@
       if (!entry) return;
 
       try {
-        if (btn.dataset.action === 'copy-cleaned') {
+        if (btn.dataset.action === 'save-learn') {
+          const textarea = listEl.querySelector(`textarea.entry-edit[data-id="${CSS.escape(id)}"]`);
+          const text = textarea ? textarea.value.trim() : entry.cleaned;
+          const learned = await invoke('update_history_entry', { id, cleaned: text });
+          if (Array.isArray(learned) && learned.length) {
+            setMsg(`Learned: ${learned.map((x) => `${x.from} → ${x.to}`).join(', ')}`, 'ok');
+          } else {
+            setMsg('Saved.', 'ok');
+          }
+          await refresh();
+        } else if (btn.dataset.action === 'copy-cleaned') {
           await invoke('copy_text', { text: entry.cleaned });
           setMsg('Copied cleaned text.', 'ok');
         } else if (btn.dataset.action === 'copy-raw') {
