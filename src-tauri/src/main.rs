@@ -8,6 +8,8 @@ mod paste;
 mod settings;
 mod state;
 
+use std::fs::{File, OpenOptions};
+use std::io;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -85,7 +87,36 @@ fn set_state(app: &AppHandle, new_state: AppState) {
     tracing::debug!("state -> {:?}", new_state);
 }
 
+fn acquire_single_instance_lock() -> io::Result<File> {
+    let dir = dirs::data_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no app data dir"))?
+        .join("DictaFlow");
+    std::fs::create_dir_all(&dir)?;
+    let lock_path = dir.join("dictaflow.lock");
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)?;
+    fs2::FileExt::try_lock_exclusive(&file)?;
+    Ok(file)
+}
+
 fn main() {
+    let _instance_lock = match acquire_single_instance_lock() {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            eprintln!(
+                "DictaFlow is already running. Quit the existing instance from the menu bar tray icon."
+            );
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Could not acquire single-instance lock: {e}");
+            std::process::exit(1);
+        }
+    };
+
     let log_file = dirs::home_dir()
         .map(|h| h.join("Library/Logs/DictaFlow"))
         .and_then(|dir| {
@@ -310,8 +341,8 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("hud").is_some() {
         return Ok(());
     }
-    let width = 110.0;
-    let height = 40.0;
+    let width = 64.0;
+    let height = 36.0;
 
     let window = WebviewWindowBuilder::new(app, "hud", WebviewUrl::App("hud.html".into()))
         .title("DictaFlow HUD")
@@ -455,14 +486,19 @@ fn position_hud(window: &tauri::WebviewWindow) {
     } else if let Some(monitor) = window.current_monitor().ok().flatten() {
         let size = monitor.size();
         let scale = monitor.scale_factor();
-        let hud_w_physical = (110.0 * scale) as i32;
-        let hud_h_physical = (40.0 * scale) as i32;
-        let x = (size.width as i32 - hud_w_physical) / 2;
-        // 120 logical px from bottom clears the Dock at its typical size.
-        let y = size.height as i32 - hud_h_physical - (120.0 * scale) as i32;
+        let hud_w_physical = (64.0 * scale) as i32;
+        let hud_h_physical = (36.0 * scale) as i32;
+        // Sit just to the left of the notch, in the menu bar zone.
+        // Notch is ~200 logical px wide, centered. Right edge of HUD lands
+        // ~6 logical px left of the notch's left edge.
+        let center_x = size.width as i32 / 2;
+        let notch_half_physical = (100.0 * scale) as i32;
+        let gap_physical = (6.0 * scale) as i32;
+        let x = center_x - notch_half_physical - gap_physical - hud_w_physical;
+        let y = (2.0 * scale) as i32;
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
-    let _ = window.set_size(LogicalSize::new(110.0, 40.0));
+    let _ = window.set_size(LogicalSize::new(64.0, 36.0));
 }
 
 fn show_about(app: AppHandle) -> tauri::Result<()> {
