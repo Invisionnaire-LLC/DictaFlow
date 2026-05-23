@@ -18,6 +18,8 @@ Local-first, cross-platform dictation. Hold a hotkey, speak, release — cleaned
 | 8 — Windows / Linux | Target-conditional whisper features (CUDA / CPU) | Scaffolded, untested |
 | 9 — Release infra | GitHub Actions, notarization, DMG | Not started |
 
+See [docs/COMPETITOR-GAP.md](docs/COMPETITOR-GAP.md) for a Wispr Flow feature comparison and prioritized gap list.
+
 ---
 
 ## How it works
