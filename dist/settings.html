@@ -46,6 +46,10 @@
       font-family: ui-monospace, Menlo, monospace;
       appearance: none;
     }
+    input.combo {
+      box-sizing: border-box;
+      min-width: 0;
+    }
     button {
       padding: 7px 13px;
       background: #3a3a42;
@@ -107,9 +111,8 @@
 
       <div class="row">
         <label>Model</label>
-        <select id="ollamaModel" class="combo">
-          <option>Loading…</option>
-        </select>
+        <input id="ollamaModel" class="combo" list="ollamaModels" spellcheck="false" placeholder="gemma3:1b" />
+        <datalist id="ollamaModels"></datalist>
       </div>
 
       <div id="ollamaMsg" class="msg"></div>
@@ -189,6 +192,7 @@
     const saveBtn = document.getElementById("save");
     const closeBtn = document.getElementById("close");
     const ollamaModelEl = document.getElementById("ollamaModel");
+    const ollamaModelsEl = document.getElementById("ollamaModels");
     const ollamaMsgEl = document.getElementById("ollamaMsg");
     const ollamaSaveBtn = document.getElementById("ollamaSave");
     const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
@@ -241,7 +245,7 @@
     async function loadOllamaModels() {
       ollamaModelEl.disabled = true;
       ollamaSaveBtn.disabled = true;
-      ollamaModelEl.innerHTML = "<option>Loading…</option>";
+      ollamaModelEl.placeholder = "Loading…";
       setOllamaMessage("");
       try {
         const [current, models] = await Promise.all([
@@ -249,34 +253,38 @@
           invoke("list_ollama_models"),
         ]);
         currentOllamaModel = current;
-        ollamaModelEl.innerHTML = "";
-        const names = new Set();
+        ollamaModelEl.value = current;
+        ollamaModelsEl.innerHTML = "";
+        const names = new Set(["gemma3:1b"]);
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "gemma3:1b";
+        defaultOpt.label = "gemma3:1b (DictaFlow default)";
+        ollamaModelsEl.appendChild(defaultOpt);
         for (const model of models) {
+          if (names.has(model.name)) continue;
           names.add(model.name);
           const opt = document.createElement("option");
           opt.value = model.name;
           const size = formatBytes(model.size);
-          opt.textContent = size ? `${model.name} (${size})` : model.name;
-          ollamaModelEl.appendChild(opt);
+          opt.label = size ? `${model.name} (${size})` : model.name;
+          ollamaModelsEl.appendChild(opt);
         }
         if (current && !names.has(current)) {
-          const opt = document.createElement("option");
-          opt.value = current;
-          opt.textContent = `${current} (not installed)`;
-          ollamaModelEl.appendChild(opt);
-        }
-        if (!ollamaModelEl.options.length) {
-          ollamaModelEl.innerHTML = "<option>No models installed</option>";
-          setOllamaMessage("Install a model with Ollama, then refresh.", "err");
+          setOllamaMessage(`Current: ${current} (manual model)`, "");
+        } else if (!models.length) {
+          setOllamaMessage("Using DictaFlow default. You can also type any Ollama model name manually.", "ok");
         } else {
-          ollamaModelEl.value = current;
           setOllamaMessage(`Current: ${current}`, "ok");
         }
-        ollamaModelEl.disabled = !ollamaModelEl.options.length;
-        ollamaSaveBtn.disabled = ollamaModelEl.value === currentOllamaModel || !ollamaModelEl.value;
+        ollamaModelEl.disabled = false;
+        ollamaSaveBtn.disabled = true;
       } catch (err) {
-        ollamaModelEl.innerHTML = "<option>Ollama unavailable</option>";
-        setOllamaMessage(String(err), "err");
+        const current = await invoke("get_ollama_model").catch(() => "");
+        currentOllamaModel = current;
+        ollamaModelEl.value = current;
+        ollamaModelEl.disabled = false;
+        ollamaSaveBtn.disabled = true;
+        setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
       }
     }
     loadOllamaModels();
@@ -360,11 +368,12 @@
       }
     });
 
-    ollamaModelEl.addEventListener("change", () => {
-      ollamaSaveBtn.disabled = ollamaModelEl.value === currentOllamaModel || !ollamaModelEl.value;
+    ollamaModelEl.addEventListener("input", () => {
+      const value = ollamaModelEl.value.trim();
+      ollamaSaveBtn.disabled = value === currentOllamaModel || !value;
       setOllamaMessage(
-        ollamaModelEl.value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
-        ollamaModelEl.value === currentOllamaModel ? "ok" : ""
+        value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
+        value === currentOllamaModel ? "ok" : ""
       );
     });
 
@@ -372,7 +381,7 @@
       ollamaSaveBtn.disabled = true;
       setOllamaMessage("");
       try {
-        const saved = await invoke("set_ollama_model", { model: ollamaModelEl.value });
+        const saved = await invoke("set_ollama_model", { model: ollamaModelEl.value.trim() });
         currentOllamaModel = saved;
         ollamaModelEl.value = saved;
         setOllamaMessage(`Saved: ${saved}`, "ok");

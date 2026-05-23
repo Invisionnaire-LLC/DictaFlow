@@ -587,20 +587,12 @@ fn list_ollama_models(app: AppHandle) -> Result<Vec<cleanup::ollama::OllamaModel
 fn set_ollama_model(app: AppHandle, model: String) -> Result<String, String> {
     let trimmed = model.trim();
     if trimmed.is_empty() {
-        return Err("Choose an Ollama model first.".to_string());
+        return Err("Enter an Ollama model first.".to_string());
     }
 
     let ctx = app
         .try_state::<AppContext>()
         .ok_or_else(|| "app context missing".to_string())?;
-
-    let installed = ctx
-        .cleaner
-        .list_ollama_models()
-        .map_err(|e| format!("could not list Ollama models: {}", e))?;
-    if !installed.iter().any(|m| m.name == trimmed) {
-        return Err(format!("Ollama model '{}' is not installed.", trimmed));
-    }
 
     let selected = trimmed.to_string();
     ctx.cleaner.set_ollama_model(selected.clone());

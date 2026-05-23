@@ -45,11 +45,7 @@ fn launch_agent_path() -> Option<PathBuf> {
 fn program_arguments() -> Result<Vec<String>> {
     let exe = std::env::current_exe().context("current executable")?;
     if let Some(app) = app_bundle_path(&exe) {
-        return Ok(vec![
-            "/usr/bin/open".to_string(),
-            "-a".to_string(),
-            app.display().to_string(),
-        ]);
+        return Ok(vec!["/usr/bin/open".to_string(), app.display().to_string()]);
     }
     Ok(vec![exe.display().to_string()])
 }
