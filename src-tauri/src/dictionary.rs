@@ -158,7 +158,7 @@ pub fn whisper_prompt() -> String {
         .map(|r| r.to.trim().to_string())
         .filter(|w| !w.is_empty())
         .collect();
-    words.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+    words.sort_by_key(|w| w.to_ascii_lowercase());
     words.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
 
     let mut out = String::from("DictaFlow, Invisionnaire");
@@ -217,10 +217,45 @@ fn candidate_pair(from: &str, to: &str) -> Option<(String, String)> {
 fn is_stopword(word: &str) -> bool {
     matches!(
         word.to_ascii_lowercase().as_str(),
-        "a" | "an" | "the" | "and" | "or" | "but" | "to" | "of" | "in" | "on" | "at" | "for"
-            | "is" | "are" | "was" | "were" | "be" | "been" | "it" | "its" | "i" | "me" | "my"
-            | "you" | "your" | "we" | "our" | "they" | "their" | "this" | "that" | "with" | "as"
-            | "by" | "from" | "so" | "if" | "not" | "no" | "yes"
+        "a" | "an"
+            | "the"
+            | "and"
+            | "or"
+            | "but"
+            | "to"
+            | "of"
+            | "in"
+            | "on"
+            | "at"
+            | "for"
+            | "is"
+            | "are"
+            | "was"
+            | "were"
+            | "be"
+            | "been"
+            | "it"
+            | "its"
+            | "i"
+            | "me"
+            | "my"
+            | "you"
+            | "your"
+            | "we"
+            | "our"
+            | "they"
+            | "their"
+            | "this"
+            | "that"
+            | "with"
+            | "as"
+            | "by"
+            | "from"
+            | "so"
+            | "if"
+            | "not"
+            | "no"
+            | "yes"
     )
 }
 

@@ -142,10 +142,8 @@ impl Transcriber {
             0.0
         };
         let trimmed = out.trim().to_string();
-        if live_preview {
-            if trimmed.is_empty() || looks_like_partial_hallucination(&trimmed) {
-                return Ok(None);
-            }
+        if live_preview && (trimmed.is_empty() || looks_like_partial_hallucination(&trimmed)) {
+            return Ok(None);
         }
         if log_result {
             tracing::info!(

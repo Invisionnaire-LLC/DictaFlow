@@ -44,7 +44,6 @@ use crate::state::AppState;
 const HUD_COMPACT_W: f64 = 64.0;
 const HUD_COMPACT_H: f64 = 36.0;
 const HUD_EXPANDED_W: f64 = 200.0;
-const HUD_EXPANDED_H: f64 = HUD_COMPACT_H;
 const PARTIAL_MIN_SECS: f32 = 0.45;
 const PARTIAL_POLL_MS: u64 = 350;
 const PARTIAL_NEW_AUDIO_SECS: f32 = 0.12;
@@ -608,6 +607,7 @@ fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
 fn set_hud_draggable(_window: &tauri::WebviewWindow, _draggable: bool) {}
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked in #7
 fn activate_application() {
     use cocoa::base::{id, YES};
     use objc::{class, msg_send, sel, sel_impl};
@@ -619,6 +619,7 @@ fn activate_application() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked in #7
 fn order_window_front(window: &WebviewWindow) {
     use cocoa::base::{id, nil};
     use objc::{msg_send, sel, sel_impl};
@@ -1157,7 +1158,11 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn update_history_entry(app: AppHandle, id: String, cleaned: String) -> Result<Vec<LearnedUpdate>, String> {
+fn update_history_entry(
+    app: AppHandle,
+    id: String,
+    cleaned: String,
+) -> Result<Vec<LearnedUpdate>, String> {
     let cleaned = cleaned.trim().to_string();
     if cleaned.is_empty() {
         return Err("text cannot be empty".into());

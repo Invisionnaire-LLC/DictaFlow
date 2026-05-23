@@ -80,6 +80,51 @@ Builds siguientes son mucho más rápidas por el caché de cargo.
 
 ---
 
+## ⚠️ Known issue: el `.exe` CUDA falla por DLLs faltantes al arrancar
+
+El build CUDA **enlaza dinámicamente** contra DLLs del runtime de cuBLAS que **no** vienen
+con el driver de NVIDIA ni van dentro del `.exe`. En una máquina con GPU NVIDIA pero **sin
+el CUDA Toolkit instalado**, el app arranca y truena buscando:
+
+- `cublas64_12.dll`
+- `cublasLt64_12.dll`
+
+(`cudart` suele ir enlazado estático en whisper.cpp, por eso normalmente solo faltan esas
+dos.) La **versión de las DLLs debe coincidir con la versión de CUDA con que se compiló**
+(el workflow usa CUDA **12.5.1** → cuBLAS `12.5.3.2`).
+
+### Fix rápido (dárselas al usuario)
+Copiar las 2 DLLs **junto al `dictaflow.exe`** instalado (p. ej. `C:\Program Files\DictaFlow\`).
+Se bajan oficiales del CDN de NVIDIA, sin instalar CUDA:
+
+```bash
+# nombre exacto del archive para una versión de CUDA dada:
+curl -s https://developer.download.nvidia.com/compute/cuda/redist/redistrib_12.5.1.json \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['libcublas']['windows-x86_64']['relative_path'])"
+# descargar y extraer las 2 DLLs:
+curl -L -o libcublas.zip \
+  https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-12.5.3.2-archive.zip
+unzip -j libcublas.zip '*/bin/cublas64_12.dll' '*/bin/cublasLt64_12.dll' -d cuda-dlls
+```
+
+### Fix correcto (instalador self-contained)
+Bundlear esas DLLs dentro del instalador para que el usuario solo necesite el **driver**
+NVIDIA. En `src-tauri/tauri.conf.json`, añade las DLLs como recursos del bundle:
+
+```jsonc
+"bundle": {
+  "resources": {
+    "cuda/cublas64_12.dll": "./",
+    "cuda/cublasLt64_12.dll": "./"
+  }
+}
+```
+
+…y en el workflow de Windows, un paso que copie las DLLs del CUDA Toolkit a `src-tauri/cuda/`
+antes de `cargo tauri build`. Así quedan al lado del `.exe` dentro del paquete.
+
+---
+
 ## Build CPU (sin necesidad de GPU NVIDIA para correrlo)
 
 El build de Windows por defecto exige CUDA (`src-tauri/Cargo.toml`):

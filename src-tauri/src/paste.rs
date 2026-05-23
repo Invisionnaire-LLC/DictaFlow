@@ -187,8 +187,8 @@ pub fn try_learn_from_field_edit(
     }
 
     if let Some(before) = before.map(str::trim).filter(|s| !s.is_empty()) {
-        if after.starts_with(before) {
-            let suffix = after[before.len()..].trim();
+        if let Some(rest) = after.strip_prefix(before) {
+            let suffix = rest.trim();
             if !suffix.is_empty() && suffix != pasted {
                 return crate::dictionary::learn_from_edit(pasted, suffix);
             }
@@ -216,11 +216,7 @@ pub fn spawn_edit_learning_watch(
                         try_learn_from_field_edit(&pasted, before.as_deref(), &trimmed)
                     {
                         for update in learned {
-                            tracing::info!(
-                                "learned replacement: {} -> {}",
-                                update.from,
-                                update.to
-                            );
+                            tracing::info!("learned replacement: {} -> {}", update.from, update.to);
                             let _ = app.emit("word_learned", update);
                         }
                     }
@@ -288,7 +284,7 @@ mod macos {
     }
 
     pub fn read_focused_text(target_pid: Option<i32>) -> Option<String> {
-        focused_element(target_pid).and_then(|element| read_element_text(element))
+        focused_element(target_pid).and_then(read_element_text)
     }
 
     pub fn measure_paste_outcome(
