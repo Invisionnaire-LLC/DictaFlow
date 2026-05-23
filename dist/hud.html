@@ -10,6 +10,9 @@
       --fg-recording: #2196F3;
       --fg-processing: #FFB74D;
       --fg-error: #E57373;
+      --ease: cubic-bezier(0.4, 0, 0.2, 1);
+      --pill-compact-w: 64px;
+      --pill-expanded-w: 200px;
     }
     html, body {
       margin: 0;
@@ -20,46 +23,92 @@
       font-family: -apple-system, Segoe UI, Roboto, sans-serif;
       overflow: hidden;
       user-select: none;
+      pointer-events: none;
+    }
+    .shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
     }
     .pill {
+      position: absolute;
+      top: 0;
+      right: 0;
       display: flex;
       align-items: center;
-      justify-content: center;
-      gap: 8px;
+      justify-content: flex-end;
+      gap: 6px;
+      width: var(--pill-compact-w);
       height: 100%;
-      width: 100%;
       background: var(--bg);
-      border-radius: 0 0 0 16px;
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      padding: 0 6px;
+      border-radius: 0 0 0 14px;
+      padding: 0 5px;
       box-sizing: border-box;
-      transition: opacity 0.2s, box-shadow 0.15s;
-    }
-    body[data-edit="true"] {
+      pointer-events: auto;
       -webkit-app-region: drag;
       app-region: drag;
+      cursor: grab;
+      transition: width 0.24s var(--ease);
     }
-    body[data-edit="true"] .pill {
-      box-shadow: 0 0 0 2px #64b5f6, 0 0 12px rgba(100, 181, 246, 0.6);
-      cursor: move;
+    body[data-layout="compact"] .pill {
+      width: var(--pill-compact-w);
+      padding: 0 5px;
+      gap: 0;
+    }
+    body[data-layout="expanded"] .pill {
+      justify-content: flex-start;
+      width: var(--pill-expanded-w);
+      padding: 0 5px 0 8px;
+      gap: 6px;
+    }
+    body:active .pill {
+      cursor: grabbing;
     }
     #mic {
-      width: 22px;
-      height: 22px;
+      flex: 0 0 20px;
+      order: 3;
+      width: 20px;
+      height: 20px;
       color: var(--fg-idle);
-      transition: color 0.15s;
+      transition: color 0.15s var(--ease);
     }
     body[data-state="recording"] #mic { color: var(--fg-recording); }
     body[data-state="processing"] #mic { color: var(--fg-processing); }
     body[data-state="error"] #mic { color: var(--fg-error); }
-    body[data-state="idle"] .pill { opacity: 1; }
-    body[data-state="recording"] .pill { opacity: 1; }
+
+    #preview {
+      flex: 1 1 auto;
+      order: 1;
+      min-width: 0;
+      font-size: 11px;
+      line-height: 1.15;
+      color: rgba(255, 255, 255, 0.92);
+      overflow: hidden;
+      white-space: nowrap;
+      text-align: left;
+      display: none;
+    }
+    #preview span {
+      display: inline-block;
+    }
+    body[data-layout="expanded"] #preview {
+      display: block;
+    }
+    body[data-layout="compact"] #preview {
+      display: none;
+    }
+    #preview.empty span {
+      color: rgba(255, 255, 255, 0.45);
+      font-style: italic;
+    }
 
     #spinner {
       display: none;
-      width: 20px;
-      height: 20px;
+      flex: 0 0 auto;
+      order: 2;
+      width: 18px;
+      height: 18px;
       border: 2px solid rgba(255, 179, 77, 0.3);
       border-top-color: var(--fg-processing);
       border-radius: 50%;
@@ -67,56 +116,61 @@
     }
     body[data-state="processing"] #spinner { display: block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    #debug {
-      position: absolute;
-      top: 0;
-      left: 0;
-      font-size: 9px;
-      color: rgba(255,255,255,0.5);
-      padding: 1px 3px;
-      display: none;
-    }
   </style>
 </head>
-<body data-state="idle">
-  <div class="pill">
-    <svg id="mic" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
-    </svg>
-    <div id="spinner"></div>
+<body data-state="idle" data-layout="compact">
+  <div class="shell">
+    <div class="pill">
+      <div id="preview" class="empty"><span>Listening…</span></div>
+      <div id="spinner"></div>
+      <svg id="mic" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
+      </svg>
+    </div>
   </div>
-  <div id="debug"></div>
 
   <script>
     const body = document.body;
-    const debugEl = document.getElementById('debug');
+    const previewEl = document.getElementById('preview');
+    const previewTextEl = previewEl.querySelector('span');
 
-    function log(msg) {
-      console.log('[DictaFlow HUD]', msg);
+    function setPreview(text) {
+      const trimmed = String(text || '').trim();
+      if (!trimmed) {
+        previewTextEl.textContent = 'Listening…';
+        previewEl.classList.add('empty');
+        previewEl.scrollLeft = 0;
+        return;
+      }
+      previewTextEl.textContent = trimmed;
+      previewEl.classList.remove('empty');
+      requestAnimationFrame(() => {
+        previewEl.scrollLeft = previewEl.scrollWidth;
+      });
     }
 
-    let unlistenState, unlistenRms;
     async function setup() {
-      if (!window.__TAURI__ || !window.__TAURI__.event) {
-        log('no __TAURI__ yet');
-        return false;
-      }
-      try {
-        const { listen } = window.__TAURI__.event;
-        unlistenState = await listen('state', (e) => {
-          log('state -> ' + e.payload);
-          body.dataset.state = String(e.payload);
-        });
-        await listen('hud_edit', (e) => {
-          body.dataset.edit = e.payload ? 'true' : 'false';
-        });
-        log('listeners attached');
-        return true;
-      } catch (err) {
-        log('setup error: ' + err);
-        return false;
-      }
+      if (!window.__TAURI__?.event) return false;
+      const { listen } = window.__TAURI__.event;
+      await listen('state', (e) => {
+        body.dataset.state = String(e.payload);
+      });
+      await listen('hud_layout', (e) => {
+        body.dataset.layout = e.payload === 'expanded' ? 'expanded' : 'compact';
+        if (e.payload === 'expanded') {
+          previewTextEl.textContent = 'Listening…';
+          previewEl.classList.add('empty');
+          previewEl.scrollLeft = 0;
+        } else {
+          previewTextEl.textContent = '';
+          previewEl.classList.add('empty');
+          previewEl.scrollLeft = 0;
+        }
+      });
+      await listen('partial', (e) => {
+        setPreview(e.payload);
+      });
+      return true;
     }
 
     async function waitForTauriAndSetup() {
@@ -124,9 +178,6 @@
         if (await setup()) return;
         await new Promise(r => setTimeout(r, 100));
       }
-      log('gave up waiting for __TAURI__');
-      debugEl.style.display = 'block';
-      debugEl.textContent = 'no IPC';
     }
 
     if (document.readyState === 'loading') {

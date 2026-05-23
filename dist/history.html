@@ -1,0 +1,228 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>DictaFlow History</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #1e1e22;
+      color: #e8e8ec;
+    }
+    .wrap { padding: 22px 26px 26px; height: calc(100% - 48px); display: flex; flex-direction: column; }
+    h1 { margin: 0 0 4px 0; font-size: 17px; font-weight: 600; }
+    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 14px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .toolbar input {
+      flex: 1;
+      padding: 9px 12px;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 13px;
+    }
+    button {
+      padding: 7px 13px;
+      background: #3a3a42;
+      border: 1px solid #4a4a52;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #45454f; }
+    button.danger { background: #5a2a2a; border-color: #7a3a3a; }
+    button.danger:hover { background: #6a3333; }
+    .meta { color: #9a9aa0; font-size: 11px; margin-bottom: 10px; }
+    .list {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #3a3a42;
+      border-radius: 8px;
+      background: #17171b;
+    }
+    .entry {
+      padding: 12px 14px;
+      border-bottom: 1px solid #2a2a31;
+    }
+    .entry:last-child { border-bottom: none; }
+    .entry-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .entry-time { color: #9a9aa0; font-size: 11px; }
+    .entry-dur { color: #7a7a80; font-size: 11px; margin-left: auto; }
+    .entry-cleaned {
+      font-size: 14px;
+      line-height: 1.45;
+      margin-bottom: 6px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .entry-raw {
+      font-size: 12px;
+      color: #9a9aa0;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 8px;
+    }
+    .entry-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .empty {
+      padding: 28px 16px;
+      text-align: center;
+      color: #9a9aa0;
+      font-size: 13px;
+    }
+    .msg { margin-top: 8px; font-size: 12px; color: #9a9aa0; min-height: 16px; }
+    .msg.ok { color: #81c784; }
+    .msg.err { color: #ef9a9a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>History</h1>
+    <div class="sub">Search past dictations by raw or cleaned text.</div>
+
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search history…" autocomplete="off" />
+      <button id="refresh">Refresh</button>
+      <button id="clear" class="danger">Clear all</button>
+    </div>
+    <div id="count" class="meta">Loading…</div>
+    <div id="list" class="list"></div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <script>
+    const searchEl = document.getElementById('search');
+    const listEl = document.getElementById('list');
+    const countEl = document.getElementById('count');
+    const msgEl = document.getElementById('msg');
+
+    let debounceTimer = null;
+    let entries = [];
+
+    function setMsg(text, kind) {
+      msgEl.textContent = text || '';
+      msgEl.className = 'msg' + (kind ? ' ' + kind : '');
+    }
+
+    function formatTime(iso) {
+      try {
+        return new Date(iso).toLocaleString();
+      } catch {
+        return iso;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;');
+    }
+
+    function render() {
+      if (!entries.length) {
+        listEl.innerHTML = '<div class="empty">No dictations yet. Hold your hotkey and speak.</div>';
+        countEl.textContent = '0 entries';
+        return;
+      }
+      countEl.textContent = `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}`;
+      listEl.innerHTML = entries.map((e) => `
+        <div class="entry" data-id="${escapeHtml(e.id)}">
+          <div class="entry-head">
+            <span class="entry-time">${escapeHtml(formatTime(e.created_at))}</span>
+            <span class="entry-dur">${e.duration_secs.toFixed(1)}s</span>
+          </div>
+          <div class="entry-cleaned">${escapeHtml(e.cleaned)}</div>
+          ${e.raw !== e.cleaned ? `<div class="entry-raw">${escapeHtml(e.raw)}</div>` : ''}
+          <div class="entry-actions">
+            <button data-action="copy-cleaned" data-id="${escapeHtml(e.id)}">Copy cleaned</button>
+            <button data-action="copy-raw" data-id="${escapeHtml(e.id)}">Copy raw</button>
+            <button data-action="delete" data-id="${escapeHtml(e.id)}" class="danger">Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function invoke(cmd, args) {
+      const { invoke } = window.__TAURI__.core;
+      return invoke(cmd, args);
+    }
+
+    async function refresh() {
+      setMsg('');
+      try {
+        const query = searchEl.value.trim();
+        entries = await invoke('search_history', { query });
+        render();
+      } catch (err) {
+        setMsg(String(err), 'err');
+      }
+    }
+
+    listEl.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-action]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const entry = entries.find((e) => e.id === id);
+      if (!entry) return;
+
+      try {
+        if (btn.dataset.action === 'copy-cleaned') {
+          await invoke('copy_text', { text: entry.cleaned });
+          setMsg('Copied cleaned text.', 'ok');
+        } else if (btn.dataset.action === 'copy-raw') {
+          await invoke('copy_text', { text: entry.raw });
+          setMsg('Copied raw text.', 'ok');
+        } else if (btn.dataset.action === 'delete') {
+          await invoke('delete_history_entry', { id });
+          setMsg('Deleted.', 'ok');
+          await refresh();
+        }
+      } catch (err) {
+        setMsg(String(err), 'err');
+      }
+    });
+
+    searchEl.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(refresh, 180);
+    });
+
+    document.getElementById('refresh').addEventListener('click', refresh);
+    document.getElementById('clear').addEventListener('click', async () => {
+      if (!confirm('Delete all history entries? This cannot be undone.')) return;
+      try {
+        await invoke('clear_history');
+        setMsg('History cleared.', 'ok');
+        await refresh();
+      } catch (err) {
+        setMsg(String(err), 'err');
+      }
+    });
+
+    async function boot() {
+      for (let i = 0; i < 50; i++) {
+        if (window.__TAURI__?.core) {
+          await refresh();
+          return;
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+      setMsg('Could not connect to DictaFlow.', 'err');
+    }
+
+    boot();
+  </script>
+</body>
+</html>

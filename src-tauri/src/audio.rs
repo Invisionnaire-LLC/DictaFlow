@@ -30,28 +30,23 @@ impl PcmBuffer {
 pub enum AudioCmd {
     Start(Option<String>),
     Stop(mpsc::Sender<Result<PcmBuffer>>),
+    Snapshot(mpsc::Sender<Result<PcmBuffer>>),
 }
 
 #[derive(Clone)]
 pub struct AudioController {
     tx: mpsc::Sender<AudioCmd>,
-    pub level_rx: Arc<Mutex<Option<mpsc::Receiver<f32>>>>,
     pub device: Arc<Mutex<Option<String>>>,
 }
 
 impl AudioController {
-    pub fn spawn() -> (Self, mpsc::Receiver<f32>) {
+    pub fn spawn() -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCmd>();
-        let (level_tx, level_rx) = mpsc::channel::<f32>();
-        thread::spawn(move || run(cmd_rx, level_tx));
-        (
-            AudioController {
-                tx: cmd_tx,
-                level_rx: Arc::new(Mutex::new(None)),
-                device: Arc::new(Mutex::new(None)),
-            },
-            level_rx,
-        )
+        thread::spawn(move || run(cmd_rx));
+        AudioController {
+            tx: cmd_tx,
+            device: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn start(&self) -> Result<()> {
@@ -67,6 +62,14 @@ impl AudioController {
             .send(AudioCmd::Stop(resp_tx))
             .map_err(|_| anyhow!("audio thread dead"))?;
         resp_rx.recv().context("audio stop reply")?
+    }
+
+    pub fn snapshot(&self) -> Result<PcmBuffer> {
+        let (resp_tx, resp_rx) = mpsc::channel();
+        self.tx
+            .send(AudioCmd::Snapshot(resp_tx))
+            .map_err(|_| anyhow!("audio thread dead"))?;
+        resp_rx.recv().context("audio snapshot reply")?
     }
 
     pub fn set_device(&self, name: Option<String>) {
@@ -88,7 +91,7 @@ struct ActiveStream {
     channels: u16,
 }
 
-fn run(rx: mpsc::Receiver<AudioCmd>, level_tx: mpsc::Sender<f32>) {
+fn run(rx: mpsc::Receiver<AudioCmd>) {
     let mut active: Option<ActiveStream> = None;
 
     while let Ok(cmd) = rx.recv() {
@@ -98,7 +101,7 @@ fn run(rx: mpsc::Receiver<AudioCmd>, level_tx: mpsc::Sender<f32>) {
                     tracing::warn!("start received while already recording; ignoring");
                     continue;
                 }
-                match build_stream(level_tx.clone(), device_name.as_deref()) {
+                match build_stream(device_name.as_deref()) {
                     Ok(s) => active = Some(s),
                     Err(e) => tracing::error!("failed to start audio: {:?}", e),
                 }
@@ -110,11 +113,18 @@ fn run(rx: mpsc::Receiver<AudioCmd>, level_tx: mpsc::Sender<f32>) {
                 };
                 let _ = reply.send(result);
             }
+            AudioCmd::Snapshot(reply) => {
+                let result = match active.as_ref() {
+                    Some(s) => snapshot_buffer(s),
+                    None => Err(anyhow!("snapshot received but not recording")),
+                };
+                let _ = reply.send(result);
+            }
         }
     }
 }
 
-fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Result<ActiveStream> {
+fn build_stream(device_name: Option<&str>) -> Result<ActiveStream> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -153,12 +163,9 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
     let stream = match sample_format {
         SampleFormat::F32 => {
             let buf = buffer.clone();
-            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[f32], _| {
-                    let level = rms(data);
-                    let _ = ltx.send(level);
                     buf.lock().extend_from_slice(data);
                 },
                 err_fn,
@@ -167,16 +174,11 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
         }
         SampleFormat::I16 => {
             let buf = buffer.clone();
-            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
                     let mut guard = buf.lock();
-                    let before = guard.len();
                     guard.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
-                    let level = rms(&guard[before..]);
-                    drop(guard);
-                    let _ = ltx.send(level);
                 },
                 err_fn,
                 None,
@@ -184,19 +186,13 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
         }
         SampleFormat::U16 => {
             let buf = buffer.clone();
-            let ltx = level_tx.clone();
             device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
                     let mut guard = buf.lock();
-                    let before = guard.len();
-                    guard
-                        .extend(data.iter().map(|&s| {
-                            (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
-                        }));
-                    let level = rms(&guard[before..]);
-                    drop(guard);
-                    let _ = ltx.send(level);
+                    guard.extend(data.iter().map(|&s| {
+                        (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
+                    }));
                 },
                 err_fn,
                 None,
@@ -258,6 +254,29 @@ fn finalize(active: ActiveStream) -> Result<PcmBuffer> {
 
     Ok(PcmBuffer {
         samples: final_samples,
+        sample_rate: TARGET_SAMPLE_RATE,
+    })
+}
+
+/// Non-destructive read of the in-progress recording buffer for live previews.
+fn snapshot_buffer(active: &ActiveStream) -> Result<PcmBuffer> {
+    let samples = active.buffer.lock().clone();
+    if samples.is_empty() {
+        return Err(anyhow!("no audio captured yet"));
+    }
+
+    let mono = downmix_mono(&samples, active.channels);
+    let resampled = if active.sample_rate == TARGET_SAMPLE_RATE {
+        mono
+    } else {
+        resample_linear(&mono, active.sample_rate, TARGET_SAMPLE_RATE)
+    };
+
+    let dc_removed = remove_dc_offset(&resampled);
+    let hp = high_pass_filter(&dc_removed, TARGET_SAMPLE_RATE, 80.0);
+
+    Ok(PcmBuffer {
+        samples: hp,
         sample_rate: TARGET_SAMPLE_RATE,
     })
 }

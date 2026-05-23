@@ -225,15 +225,7 @@
 
     <div class="section">
       <h1 style="margin-top: 18px">HUD Position</h1>
-      <div class="sub">The floating pill that shows recording state. Click Edit, drag the pill to a new spot, then Save.</div>
-
-      <div id="hudMsg" class="msg"></div>
-
-      <div class="inline-actions">
-        <button id="hudEdit">Edit position</button>
-        <button id="hudSave" class="primary" style="display:none">Save position</button>
-        <button id="hudCancel" style="display:none">Cancel</button>
-      </div>
+      <div class="sub">Click and drag the floating pill in the menu bar to move it. The position saves automatically.</div>
     </div>
 
     <div class="actions">
@@ -257,11 +249,6 @@
     const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
     const launchAtLoginEl = document.getElementById("launchAtLogin");
     const loginMsgEl = document.getElementById("loginMsg");
-
-    const hudEditBtn = document.getElementById("hudEdit");
-    const hudSaveBtn = document.getElementById("hudSave");
-    const hudCancelBtn = document.getElementById("hudCancel");
-    const hudMsgEl = document.getElementById("hudMsg");
 
     let pending = null;
     let currentOllamaModel = "";
@@ -559,52 +546,6 @@
     });
     document.getElementById("micOpen").addEventListener("click", () => {
       invoke("open_microphone_settings").catch(() => {});
-    });
-
-    // --- HUD position ---
-
-    function setHudEditing(editing) {
-      hudEditBtn.style.display = editing ? "none" : "";
-      hudSaveBtn.style.display = editing ? "" : "none";
-      hudCancelBtn.style.display = editing ? "" : "none";
-    }
-
-    hudEditBtn.addEventListener("click", async () => {
-      hudMsgEl.textContent = "";
-      hudMsgEl.className = "msg";
-      try {
-        await invoke("hud_edit_start");
-        setHudEditing(true);
-        hudMsgEl.textContent = "Drag the glowing pill to its new spot, then click Save.";
-        hudMsgEl.className = "msg";
-      } catch (err) {
-        hudMsgEl.textContent = String(err);
-        hudMsgEl.className = "msg err";
-      }
-    });
-
-    hudSaveBtn.addEventListener("click", async () => {
-      try {
-        await invoke("hud_edit_save");
-        setHudEditing(false);
-        hudMsgEl.textContent = "Position saved.";
-        hudMsgEl.className = "msg ok";
-      } catch (err) {
-        hudMsgEl.textContent = String(err);
-        hudMsgEl.className = "msg err";
-      }
-    });
-
-    hudCancelBtn.addEventListener("click", async () => {
-      try {
-        await invoke("hud_edit_cancel");
-        setHudEditing(false);
-        hudMsgEl.textContent = "Reverted.";
-        hudMsgEl.className = "msg";
-      } catch (err) {
-        hudMsgEl.textContent = String(err);
-        hudMsgEl.className = "msg err";
-      }
     });
   </script>
 </body>

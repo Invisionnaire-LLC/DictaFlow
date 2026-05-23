@@ -32,6 +32,10 @@ impl HybridCleaner {
 
     pub fn clean(&self, raw: &str) -> String {
         let rules_output = rules::apply(raw);
+        if should_skip_llm(raw, &rules_output) {
+            tracing::debug!("hybrid source=rules_only in={}", rules_output.len());
+            return rules_output;
+        }
         match self.ollama.clean(&rules_output) {
             Ok(out) => {
                 tracing::info!(
@@ -53,4 +57,18 @@ impl HybridCleaner {
             tracing::warn!("ollama warmup skipped: {:?}", e);
         }
     }
+}
+
+fn normalize_for_compare(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn should_skip_llm(raw: &str, rules_output: &str) -> bool {
+    let raw_n = normalize_for_compare(raw);
+    let rules_n = normalize_for_compare(rules_output);
+    if raw_n == rules_n {
+        return true;
+    }
+    // Very short utterances rarely benefit from an LLM pass.
+    rules_n.split_whitespace().count() <= 2
 }

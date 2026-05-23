@@ -20,6 +20,7 @@ const DEFAULT_VOCAB: &str = "DictaFlow, Invisionnaire.\n";
 
 pub struct Transcriber {
     ctx: Mutex<WhisperContext>,
+    vocabulary: String,
 }
 
 impl Transcriber {
@@ -42,6 +43,7 @@ impl Transcriber {
         seed_vocabulary_if_missing();
         Ok(Transcriber {
             ctx: Mutex::new(ctx),
+            vocabulary: load_vocabulary(),
         })
     }
 
@@ -52,6 +54,34 @@ impl Transcriber {
     }
 
     pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
+        self.transcribe_inner(samples, true, false)?
+            .ok_or_else(|| anyhow!("empty transcription"))
+    }
+
+    /// Live preview pass — only the most recent audio tail to keep latency bounded.
+    pub fn transcribe_partial(&self, samples: &[f32]) -> Result<Option<String>> {
+        const MAX_PARTIAL_SAMPLES: usize = 16_000 * 2;
+        const MIN_PARTIAL_SAMPLES: usize = 16_000 * 3 / 10;
+        let tail = if samples.len() > MAX_PARTIAL_SAMPLES {
+            &samples[samples.len() - MAX_PARTIAL_SAMPLES..]
+        } else {
+            samples
+        };
+        if tail.len() < MIN_PARTIAL_SAMPLES {
+            return Ok(None);
+        }
+        if !tail_has_speech(tail) {
+            return Ok(None);
+        }
+        self.transcribe_inner(tail, false, true)
+    }
+
+    fn transcribe_inner(
+        &self,
+        samples: &[f32],
+        log_result: bool,
+        live_preview: bool,
+    ) -> Result<Option<String>> {
         let start = std::time::Instant::now();
         let audio_secs = samples.len() as f32 / 16_000.0;
         let ctx = self.ctx.lock();
@@ -67,11 +97,18 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_no_context(true);
-        params.set_single_segment(false);
         params.set_temperature(0.0);
-        let vocab = load_vocabulary();
-        if !vocab.is_empty() {
-            params.set_initial_prompt(&vocab);
+        if live_preview {
+            params.set_single_segment(true);
+            params.set_suppress_nst(true);
+            params.set_entropy_thold(2.2);
+            params.set_logprob_thold(-1.0);
+            // Vocabulary prompt helps final transcription but can leak into live preview.
+        } else {
+            params.set_single_segment(false);
+            if !self.vocabulary.is_empty() {
+                params.set_initial_prompt(&self.vocabulary);
+            }
         }
 
         state.full(params, samples).context("whisper full")?;
@@ -82,6 +119,14 @@ impl Transcriber {
             let seg = state
                 .get_segment(i)
                 .ok_or_else(|| anyhow!("segment {} missing", i))?;
+            if live_preview && !segment_is_reliable(&seg) {
+                tracing::debug!(
+                    "partial segment rejected: no_speech={:.2}, avg_prob={:.2}",
+                    seg.no_speech_probability(),
+                    segment_avg_token_probability(&seg)
+                );
+                continue;
+            }
             let text = seg.to_str().context("segment text")?;
             out.push_str(text);
         }
@@ -91,14 +136,82 @@ impl Transcriber {
         } else {
             0.0
         };
-        tracing::info!(
-            "transcribed {:.2}s audio in {}ms (rtf={:.2}x)",
-            audio_secs,
-            elapsed.as_millis(),
-            rtf
-        );
-        Ok(out.trim().to_string())
+        let trimmed = out.trim().to_string();
+        if live_preview {
+            if trimmed.is_empty() || looks_like_partial_hallucination(&trimmed) {
+                return Ok(None);
+            }
+        }
+        if log_result {
+            tracing::info!(
+                "transcribed {:.2}s audio in {}ms (rtf={:.2}x)",
+                audio_secs,
+                elapsed.as_millis(),
+                rtf
+            );
+        } else {
+            tracing::debug!(
+                "partial transcribed {:.2}s audio in {}ms",
+                audio_secs,
+                elapsed.as_millis()
+            );
+        }
+        Ok(if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        })
     }
+}
+
+const PARTIAL_MIN_RMS: f32 = 0.008;
+const PARTIAL_TAIL_RMS_SECS: f32 = 0.35;
+const PARTIAL_MAX_NO_SPEECH: f32 = 0.72;
+const PARTIAL_MIN_AVG_TOKEN_PROB: f32 = 0.28;
+
+pub fn tail_has_speech(samples: &[f32]) -> bool {
+    let tail_samples = (16_000.0 * PARTIAL_TAIL_RMS_SECS) as usize;
+    let start = samples.len().saturating_sub(tail_samples);
+    crate::audio::rms(&samples[start..]) >= PARTIAL_MIN_RMS
+}
+
+fn segment_avg_token_probability(seg: &whisper_rs::WhisperSegment<'_>) -> f32 {
+    let n = seg.n_tokens();
+    if n == 0 {
+        return 0.0;
+    }
+    let sum: f32 = (0..n)
+        .filter_map(|i| seg.get_token(i).map(|token| token.token_probability()))
+        .sum();
+    sum / n as f32
+}
+
+fn segment_is_reliable(seg: &whisper_rs::WhisperSegment<'_>) -> bool {
+    seg.no_speech_probability() <= PARTIAL_MAX_NO_SPEECH
+        && segment_avg_token_probability(seg) >= PARTIAL_MIN_AVG_TOKEN_PROB
+}
+
+fn looks_like_partial_hallucination(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "thank you for watching",
+        "thanks for watching",
+        "please subscribe",
+        "subtitles by",
+        "subtitle by",
+        "amara.org",
+        "audible.com",
+        "copyright",
+        "all rights reserved",
+        "[music]",
+        "(music)",
+        "♪",
+        "www.",
+        ".com",
+        "mbc news",
+        "breaking news",
+    ];
+    PHRASES.iter().any(|phrase| lower.contains(phrase))
 }
 
 fn num_cpus() -> i32 {

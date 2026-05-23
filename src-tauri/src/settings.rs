@@ -36,6 +36,13 @@ pub struct HudPosition {
     pub y: i32,
 }
 
+/// Physical screen coords for the HUD window's top-right corner (stable across resizes).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HudAnchor {
+    pub right: i32,
+    pub top: i32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Settings {
     pub input_device: Option<String>,
@@ -43,6 +50,8 @@ pub struct Settings {
     pub hotkey: Option<Hotkey>,
     #[serde(default)]
     pub hud_position: Option<HudPosition>,
+    #[serde(default)]
+    pub hud_anchor: Option<HudAnchor>,
     #[serde(default)]
     pub ollama_model: Option<String>,
     #[serde(default)]

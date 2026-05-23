@@ -4,6 +4,7 @@
 mod asr;
 mod audio;
 mod cleanup;
+mod history;
 mod login_item;
 mod paste;
 mod settings;
@@ -11,10 +12,10 @@ mod state;
 
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use std::str::FromStr;
@@ -30,8 +31,19 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 use crate::audio::{AudioController, PcmBuffer, MIN_DURATION_SECS};
 use crate::cleanup::HybridCleaner;
-use crate::settings::{Hotkey, HudPosition, DEFAULT_OLLAMA_MODEL};
+use crate::settings::{Hotkey, HudAnchor, HudPosition, DEFAULT_OLLAMA_MODEL};
 use crate::state::AppState;
+
+const HUD_COMPACT_W: f64 = 64.0;
+const HUD_COMPACT_H: f64 = 36.0;
+const HUD_EXPANDED_W: f64 = 200.0;
+const HUD_EXPANDED_H: f64 = HUD_COMPACT_H;
+const PARTIAL_MIN_SECS: f32 = 0.45;
+const PARTIAL_POLL_MS: u64 = 350;
+const PARTIAL_NEW_AUDIO_SECS: f32 = 0.12;
+const PARTIAL_PREVIEW_CHARS: usize = 96;
+
+static HUD_LAST_PLACED: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub struct AppContext {
     pub audio: AudioController,
@@ -40,6 +52,7 @@ pub struct AppContext {
     pub state: Mutex<AppState>,
     pub current_shortcut: Mutex<Shortcut>,
     pub current_hotkey: Mutex<Hotkey>,
+    pub partial_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 fn parse_modifiers(mods: &[String]) -> Result<Option<Modifiers>, String> {
@@ -162,9 +175,11 @@ fn main() {
             get_launch_at_login,
             set_launch_at_login,
             close_settings,
-            hud_edit_start,
-            hud_edit_save,
-            hud_edit_cancel,
+            close_history,
+            search_history,
+            delete_history_entry,
+            clear_history,
+            copy_text,
             check_accessibility,
             prompt_accessibility,
             open_accessibility_settings,
@@ -174,7 +189,7 @@ fn main() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(ActivationPolicy::Accessory);
 
-            let (audio, level_rx) = AudioController::spawn();
+            let audio = AudioController::spawn();
             let saved = settings::Settings::load();
             let ollama_model = saved
                 .ollama_model
@@ -203,6 +218,7 @@ fn main() {
                 state: Mutex::new(AppState::Idle),
                 current_shortcut: Mutex::new(shortcut),
                 current_hotkey: Mutex::new(hotkey.clone()),
+                partial_cancel: Mutex::new(None),
             };
             app.manage(ctx);
 
@@ -215,7 +231,6 @@ fn main() {
             build_tray(app.handle())?;
             build_hud(app.handle())?;
 
-            spawn_rms_forwarder(app.handle().clone(), level_rx);
             spawn_initialization(app.handle().clone());
 
             Ok(())
@@ -229,6 +244,7 @@ fn build_menu<R: Runtime>(
     current_device: Option<&str>,
 ) -> tauri::Result<Menu<R>> {
     let about_item = MenuItem::with_id(app, "about", "About DictaFlow", true, None::<&str>)?;
+    let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let sep1 = PredefinedMenuItem::separator(app)?;
@@ -272,6 +288,7 @@ fn build_menu<R: Runtime>(
             &sep1,
             &mic_submenu,
             &sep2,
+            &history_item,
             &settings_item,
             &sep3,
             &quit_item,
@@ -306,6 +323,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 "settings" => {
                     if let Err(e) = show_settings(app.clone()) {
                         tracing::error!("settings window: {:?}", e);
+                    }
+                }
+                "history" => {
+                    if let Err(e) = show_history(app.clone()) {
+                        tracing::error!("history window: {:?}", e);
                     }
                 }
                 "quit" => app.exit(0),
@@ -351,8 +373,8 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("hud").is_some() {
         return Ok(());
     }
-    let width = 64.0;
-    let height = 36.0;
+    let width = HUD_EXPANDED_W;
+    let height = HUD_COMPACT_H;
 
     let window = WebviewWindowBuilder::new(app, "hud", WebviewUrl::App("hud.html".into()))
         .title("DictaFlow HUD")
@@ -367,16 +389,28 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
         .build()?;
 
     position_hud(&window);
+    persist_legacy_hud_anchor(&window);
     #[cfg(target_os = "macos")]
     raise_hud_level(&window);
+    set_hud_draggable(&window, true);
 
     let app_clone = app.clone();
     window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            if let Some(w) = app_clone.get_webview_window("hud") {
-                let _ = w.hide();
+        match event {
+            WindowEvent::CloseRequested { api, .. } => {
+                api.prevent_close();
+                if let Some(w) = app_clone.get_webview_window("hud") {
+                    let _ = w.hide();
+                }
             }
+            WindowEvent::Moved(_) => {
+                if hud_move_should_persist() {
+                    if let Some(hud) = app_clone.get_webview_window("hud") {
+                        save_hud_position_from_window(&hud);
+                    }
+                }
+            }
+            _ => {}
         }
     });
 
@@ -521,7 +555,7 @@ fn order_window_front(window: &WebviewWindow) {
 }
 
 fn auxiliary_windows_visible(app: &AppHandle) -> bool {
-    ["settings", "about"].iter().any(|label| {
+    ["settings", "about", "history"].iter().any(|label| {
         app.get_webview_window(label)
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false)
@@ -584,25 +618,152 @@ fn open_auxiliary_window(
     Ok(())
 }
 
-fn position_hud(window: &tauri::WebviewWindow) {
-    let saved = settings::Settings::load().hud_position;
-    if let Some(pos) = saved {
-        let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
-    } else if let Some(monitor) = window.current_monitor().ok().flatten() {
-        let size = monitor.size();
-        let scale = monitor.scale_factor();
-        let hud_w_physical = (64.0 * scale) as i32;
-        // Sit just to the left of the notch, in the menu bar zone.
-        // Notch is ~200 logical px wide, centered. Right edge of HUD lands
-        // ~6 logical px left of the notch's left edge.
-        let center_x = size.width as i32 / 2;
-        let notch_half_physical = (100.0 * scale) as i32;
-        let gap_physical = (6.0 * scale) as i32;
-        let x = center_x - notch_half_physical - gap_physical - hud_w_physical;
-        let y = (2.0 * scale) as i32;
-        let _ = window.set_position(PhysicalPosition::new(x, y));
+fn mark_hud_placed_programmatically() {
+    *HUD_LAST_PLACED.lock() = Some(Instant::now());
+}
+
+fn hud_move_should_persist() -> bool {
+    HUD_LAST_PLACED
+        .lock()
+        .map(|t| t.elapsed() > Duration::from_millis(350))
+        .unwrap_or(true)
+}
+
+fn resolved_hud_anchor(settings: &settings::Settings, scale: f64) -> Option<HudAnchor> {
+    if let Some(anchor) = settings.hud_anchor {
+        return Some(anchor);
     }
-    let _ = window.set_size(LogicalSize::new(64.0, 36.0));
+    settings.hud_position.map(|pos| {
+        let compact_w = (HUD_COMPACT_W * scale).round() as i32;
+        HudAnchor {
+            right: pos.x + compact_w,
+            top: pos.y,
+        }
+    })
+}
+
+fn default_hud_anchor(monitor: &tauri::Monitor, scale: f64) -> HudAnchor {
+    let size = monitor.size();
+    let compact_w = (HUD_COMPACT_W * scale).round() as i32;
+    let center_x = size.width as i32 / 2;
+    let notch_half_physical = (100.0 * scale).round() as i32;
+    let gap_physical = (6.0 * scale).round() as i32;
+    let compact_x = center_x - notch_half_physical - gap_physical - compact_w;
+    HudAnchor {
+        right: compact_x + compact_w,
+        top: (2.0 * scale).round() as i32,
+    }
+}
+
+fn position_hud(window: &tauri::WebviewWindow) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let expanded_w_phys = (HUD_EXPANDED_W * scale).round() as i32;
+    let settings = settings::Settings::load();
+    let anchor = resolved_hud_anchor(&settings, scale).or_else(|| {
+        window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .map(|monitor| default_hud_anchor(&monitor, scale))
+    });
+
+    if let Some(anchor) = anchor {
+        let x = anchor.right - expanded_w_phys;
+        let _ = window.set_position(PhysicalPosition::new(x, anchor.top));
+    }
+    let _ = window.set_size(LogicalSize::new(HUD_EXPANDED_W, HUD_COMPACT_H));
+    mark_hud_placed_programmatically();
+}
+
+fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
+    let mut saved = settings::Settings::load();
+    if saved.hud_anchor.is_some() || saved.hud_position.is_none() {
+        return;
+    }
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let Some(anchor) = resolved_hud_anchor(&saved, scale) else {
+        return;
+    };
+    let compact_w = (HUD_COMPACT_W * scale).round() as i32;
+    saved.hud_anchor = Some(anchor);
+    saved.hud_position = Some(HudPosition {
+        x: anchor.right - compact_w,
+        y: anchor.top,
+    });
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not migrate hud anchor: {:?}", e);
+    } else {
+        tracing::info!(
+            "migrated hud anchor: right={}, top={}",
+            anchor.right,
+            anchor.top
+        );
+    }
+}
+
+fn save_hud_position_from_window(window: &tauri::WebviewWindow) {
+    let Ok(outer) = window.outer_position() else {
+        return;
+    };
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let compact_w = (HUD_COMPACT_W * scale).round() as i32;
+    let expanded_w = (HUD_EXPANDED_W * scale).round() as i32;
+    let anchor = HudAnchor {
+        right: outer.x + expanded_w,
+        top: outer.y,
+    };
+
+    let mut saved = settings::Settings::load();
+    let unchanged = saved
+        .hud_anchor
+        .is_some_and(|a| a.right == anchor.right && a.top == anchor.top);
+    if unchanged {
+        return;
+    }
+
+    saved.hud_anchor = Some(anchor);
+    saved.hud_position = Some(HudPosition {
+        x: anchor.right - compact_w,
+        y: anchor.top,
+    });
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not save hud position: {:?}", e);
+    } else {
+        tracing::info!(
+            "hud anchor saved: right={}, top={}",
+            anchor.right,
+            anchor.top
+        );
+    }
+}
+
+fn expand_hud(app: &AppHandle) {
+    emit_hud(app, "hud_layout", "expanded");
+    emit_hud(app, "partial", "Listening…");
+}
+
+fn compact_hud(app: &AppHandle) {
+    emit_hud(app, "partial", "");
+    emit_hud(app, "hud_layout", "compact");
+}
+
+fn partial_preview_tail(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let char_count = trimmed.chars().count();
+    if char_count <= PARTIAL_PREVIEW_CHARS {
+        return trimmed.to_string();
+    }
+    trimmed
+        .chars()
+        .skip(char_count - PARTIAL_PREVIEW_CHARS)
+        .collect()
+}
+
+fn emit_hud(app: &AppHandle, event: &str, payload: &str) {
+    let _ = app.emit(event, payload);
 }
 
 fn show_about(app: AppHandle) -> tauri::Result<()> {
@@ -618,6 +779,45 @@ fn show_settings(app: AppHandle) -> tauri::Result<()> {
         520.0,
         820.0,
     )
+}
+
+fn show_history(app: AppHandle) -> tauri::Result<()> {
+    open_auxiliary_window(
+        &app,
+        "history",
+        "history.html",
+        "DictaFlow History",
+        760.0,
+        620.0,
+    )
+}
+
+#[tauri::command]
+fn search_history(query: String) -> Result<Vec<history::HistoryEntry>, String> {
+    history::search(&query).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_history_entry(id: String) -> Result<bool, String> {
+    history::delete(&id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn clear_history() -> Result<(), String> {
+    history::clear_all().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    paste::copy_only(&app, &text).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn close_history(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("history") {
+        let _ = w.close();
+    }
+    restore_menu_bar_activation_policy(&app);
 }
 
 #[tauri::command]
@@ -747,53 +947,6 @@ fn close_settings(app: AppHandle) {
     restore_menu_bar_activation_policy(&app);
 }
 
-#[tauri::command]
-fn hud_edit_start(app: AppHandle) -> Result<(), String> {
-    let hud = app
-        .get_webview_window("hud")
-        .ok_or_else(|| "HUD window missing".to_string())?;
-    let _ = hud.emit("hud_edit", true);
-    set_hud_draggable(&hud, true);
-    let _ = hud.show();
-    Ok(())
-}
-
-#[tauri::command]
-fn hud_edit_save(app: AppHandle) -> Result<HudPosition, String> {
-    let hud = app
-        .get_webview_window("hud")
-        .ok_or_else(|| "HUD window missing".to_string())?;
-    let pos = hud
-        .outer_position()
-        .map_err(|e| format!("read hud position: {}", e))?;
-    let hud_pos = HudPosition { x: pos.x, y: pos.y };
-    let mut saved = settings::Settings::load();
-    saved.hud_position = Some(hud_pos);
-    saved.save().map_err(|e| format!("save: {}", e))?;
-    set_hud_draggable(&hud, false);
-    let _ = hud.emit("hud_edit", false);
-    Ok(hud_pos)
-}
-
-#[tauri::command]
-fn hud_edit_cancel(app: AppHandle) -> Result<(), String> {
-    let hud = app
-        .get_webview_window("hud")
-        .ok_or_else(|| "HUD window missing".to_string())?;
-    position_hud(&hud);
-    set_hud_draggable(&hud, false);
-    let _ = hud.emit("hud_edit", false);
-    Ok(())
-}
-
-fn spawn_rms_forwarder(app: AppHandle, rx: mpsc::Receiver<f32>) {
-    thread::spawn(move || {
-        while let Ok(level) = rx.recv() {
-            let _ = app.emit("rms", level);
-        }
-    });
-}
-
 /// Downloads the Whisper model in the background and loads it into memory.
 fn spawn_initialization(app: AppHandle) {
     thread::spawn(move || {
@@ -830,14 +983,25 @@ fn spawn_initialization(app: AppHandle) {
                     *ctx.asr.lock() = Some(transcriber.clone());
                 }
                 tracing::info!("whisper model loaded; prewarming");
-                let _ = transcriber.prewarm();
-                tracing::info!("whisper prewarm complete");
+                let transcriber_warm = transcriber.clone();
+                thread::spawn(move || {
+                    if let Err(e) = transcriber_warm.prewarm() {
+                        tracing::warn!("whisper prewarm failed: {:?}", e);
+                    } else {
+                        tracing::info!("whisper prewarm complete");
+                    }
+                });
             }
             Err(e) => tracing::error!("whisper init failed: {:?}", e),
         }
 
         if let Some(ctx) = app.try_state::<AppContext>() {
-            ctx.cleaner.warmup();
+            let app_warm = app.clone();
+            thread::spawn(move || {
+                if let Some(ctx) = app_warm.try_state::<AppContext>() {
+                    ctx.cleaner.warmup();
+                }
+            });
         }
     });
 }
@@ -857,6 +1021,8 @@ fn handle_press(app: AppHandle) {
         return;
     }
     set_state(&app, AppState::Recording);
+    expand_hud(&app);
+    start_partial_transcription(app);
 }
 
 fn handle_release(app: AppHandle) {
@@ -868,6 +1034,7 @@ fn handle_release(app: AppHandle) {
         tracing::debug!("ignore release while not recording");
         return;
     }
+    stop_partial_transcription(&app);
     set_state(&app, AppState::Processing);
 
     let app_clone = app.clone();
@@ -893,8 +1060,6 @@ fn handle_release(app: AppHandle) {
             return;
         }
 
-        let _ = audio::save_wav(&pcm); // best-effort debugging artifact
-
         let text = match transcribe(&ctx, &pcm) {
             Ok(t) => t,
             Err(e) => {
@@ -919,7 +1084,6 @@ fn handle_release(app: AppHandle) {
             );
             let _ = paste::copy_only(&app_clone, &cleaned);
             let _ = app_clone.emit("paste_blocked", "accessibility");
-            open_accessibility_settings();
             set_state(&app_clone, AppState::Error);
             reset_to_idle_soon(app_clone.clone());
             return;
@@ -938,6 +1102,16 @@ fn handle_release(app: AppHandle) {
             cleaned.len()
         );
         set_state(&app_clone, AppState::Idle);
+
+        let duration_secs = pcm.duration_secs();
+        thread::spawn(move || {
+            let audio_path = audio::save_wav(&pcm)
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned());
+            if let Err(e) = history::append(&text, &cleaned, duration_secs, audio_path) {
+                tracing::warn!("history append failed: {:?}", e);
+            }
+        });
     });
 }
 
@@ -949,12 +1123,122 @@ fn transcribe(ctx: &AppContext, pcm: &PcmBuffer) -> anyhow::Result<String> {
     match transcriber {
         Some(t) => t.transcribe(&pcm.samples),
         None => {
-            tracing::warn!("whisper not ready yet; returning placeholder");
-            Ok(String::from(
-                "whisper model still loading, please try again in a moment",
-            ))
+            tracing::warn!("whisper not ready yet");
+            Err(anyhow::anyhow!("whisper model still loading, please try again"))
         }
     }
+}
+
+fn start_partial_transcription(app: AppHandle) {
+    cancel_partial_worker(&app);
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        *ctx.partial_cancel.lock() = Some(cancel.clone());
+    }
+
+    thread::spawn(move || {
+        let min_new_samples = (audio::TARGET_SAMPLE_RATE as f32 * PARTIAL_NEW_AUDIO_SECS) as usize;
+        let mut last_sample_count = 0usize;
+        let busy = Arc::new(AtomicBool::new(false));
+        let last_emitted = Arc::new(Mutex::new(String::new()));
+
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(PARTIAL_POLL_MS));
+            if cancel.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let ctx = match app.try_state::<AppContext>() {
+                Some(c) => c,
+                None => break,
+            };
+            if *ctx.state.lock() != AppState::Recording {
+                break;
+            }
+            if busy.load(Ordering::Relaxed) {
+                continue;
+            }
+
+            let pcm = match ctx.audio.snapshot() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if pcm.duration_secs() < PARTIAL_MIN_SECS {
+                continue;
+            }
+            if pcm.samples.len().saturating_sub(last_sample_count) < min_new_samples {
+                continue;
+            }
+            last_sample_count = pcm.samples.len();
+
+            let transcriber = ctx.asr.lock().clone();
+            let Some(transcriber) = transcriber else {
+                continue;
+            };
+
+            busy.store(true, Ordering::Release);
+            let samples = pcm.samples.clone();
+            let app_worker = app.clone();
+            let cancel_worker = cancel.clone();
+            let busy_worker = busy.clone();
+            let last_emitted_worker = last_emitted.clone();
+            thread::spawn(move || {
+                struct BusyGuard(Arc<AtomicBool>);
+                impl Drop for BusyGuard {
+                    fn drop(&mut self) {
+                        self.0.store(false, Ordering::Release);
+                    }
+                }
+                let _busy_guard = BusyGuard(busy_worker);
+
+                if cancel_worker.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                let partial = match transcriber.transcribe_partial(&samples) {
+                    Ok(Some(t)) => t,
+                    Ok(None) => return,
+                    Err(e) => {
+                        tracing::debug!("partial transcription failed: {:?}", e);
+                        return;
+                    }
+                };
+
+                let preview = partial_preview_tail(&partial);
+                if preview.is_empty() {
+                    return;
+                }
+
+                {
+                    let mut last = last_emitted_worker.lock();
+                    if *last == preview {
+                        return;
+                    }
+                    *last = preview.clone();
+                }
+
+                tracing::debug!("partial preview: {} chars", preview.len());
+                emit_hud(&app_worker, "partial", &preview);
+            });
+        }
+    });
+}
+
+fn cancel_partial_worker(app: &AppHandle) {
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        if let Some(cancel) = ctx.partial_cancel.lock().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+fn stop_partial_transcription(app: &AppHandle) {
+    cancel_partial_worker(app);
+    compact_hud(app);
 }
 
 fn reset_to_idle_soon(app: AppHandle) {
