@@ -50,6 +50,57 @@
       box-sizing: border-box;
       min-width: 0;
     }
+    .combo-wrap {
+      flex: 1;
+      position: relative;
+      display: flex;
+      gap: 6px;
+      min-width: 0;
+    }
+    .combo-wrap input.combo { flex: 1; }
+    .combo-toggle {
+      flex: 0 0 auto;
+      width: 34px;
+      padding: 0;
+      font-size: 11px;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .combo-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 20;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      display: none;
+    }
+    .combo-list.open { display: block; }
+    .combo-item {
+      padding: 9px 12px;
+      cursor: pointer;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 13px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .combo-item:hover,
+    .combo-item.active { background: #3a3a42; }
+    .combo-item.selected { color: #64b5f6; }
+    .combo-item .meta {
+      margin-left: auto;
+      color: #7a7a80;
+      font-size: 11px;
+      font-family: -apple-system, sans-serif;
+    }
     button {
       padding: 7px 13px;
       background: #3a3a42;
@@ -111,8 +162,15 @@
 
       <div class="row">
         <label>Model</label>
-        <input id="ollamaModel" class="combo" list="ollamaModels" spellcheck="false" placeholder="gemma3:1b" />
-        <datalist id="ollamaModels"></datalist>
+        <div class="combo-wrap">
+          <input id="ollamaModel" class="combo" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
+          <button id="ollamaToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
+          <div id="ollamaList" class="combo-list" role="listbox"></div>
+        </div>
+      </div>
+
+      <div class="hint">
+        Type any Ollama model, or click ▾ to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
       </div>
 
       <div id="ollamaMsg" class="msg"></div>
@@ -192,7 +250,8 @@
     const saveBtn = document.getElementById("save");
     const closeBtn = document.getElementById("close");
     const ollamaModelEl = document.getElementById("ollamaModel");
-    const ollamaModelsEl = document.getElementById("ollamaModels");
+    const ollamaToggleEl = document.getElementById("ollamaToggle");
+    const ollamaListEl = document.getElementById("ollamaList");
     const ollamaMsgEl = document.getElementById("ollamaMsg");
     const ollamaSaveBtn = document.getElementById("ollamaSave");
     const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
@@ -242,32 +301,66 @@
       ollamaMsgEl.className = kind ? `msg ${kind}` : "msg";
     }
 
+    // Dropdown items: gemma3:1b default is always first, so it is always pickable.
+    let comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
+
+    function renderComboList() {
+      const selected = ollamaModelEl.value.trim();
+      ollamaListEl.innerHTML = "";
+      for (const item of comboItems) {
+        const row = document.createElement("div");
+        row.className = "combo-item";
+        row.setAttribute("role", "option");
+        if (item.value === selected) row.classList.add("selected");
+        const name = document.createElement("span");
+        name.textContent = item.value;
+        row.appendChild(name);
+        if (item.meta) {
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = item.meta;
+          row.appendChild(meta);
+        }
+        // mousedown (not click) so it fires before the input's blur.
+        row.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          ollamaModelEl.value = item.value;
+          onOllamaInput();
+          closeComboList();
+          ollamaModelEl.focus();
+        });
+        ollamaListEl.appendChild(row);
+      }
+    }
+
+    function openComboList() {
+      renderComboList(); // always shows the full list — it's a picker, not a search
+      ollamaListEl.classList.add("open");
+      ollamaToggleEl.setAttribute("aria-expanded", "true");
+    }
+    function closeComboList() {
+      ollamaListEl.classList.remove("open");
+      ollamaToggleEl.setAttribute("aria-expanded", "false");
+    }
+
     async function loadOllamaModels() {
       ollamaModelEl.disabled = true;
       ollamaSaveBtn.disabled = true;
       ollamaModelEl.placeholder = "Loading…";
       setOllamaMessage("");
+      let current = "";
       try {
-        const [current, models] = await Promise.all([
+        const [cur, models] = await Promise.all([
           invoke("get_ollama_model"),
           invoke("list_ollama_models"),
         ]);
-        currentOllamaModel = current;
-        ollamaModelEl.value = current;
-        ollamaModelsEl.innerHTML = "";
+        current = cur;
         const names = new Set(["gemma3:1b"]);
-        const defaultOpt = document.createElement("option");
-        defaultOpt.value = "gemma3:1b";
-        defaultOpt.label = "gemma3:1b (DictaFlow default)";
-        ollamaModelsEl.appendChild(defaultOpt);
+        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
         for (const model of models) {
           if (names.has(model.name)) continue;
           names.add(model.name);
-          const opt = document.createElement("option");
-          opt.value = model.name;
-          const size = formatBytes(model.size);
-          opt.label = size ? `${model.name} (${size})` : model.name;
-          ollamaModelsEl.appendChild(opt);
+          comboItems.push({ value: model.name, meta: formatBytes(model.size) });
         }
         if (current && !names.has(current)) {
           setOllamaMessage(`Current: ${current} (manual model)`, "");
@@ -276,16 +369,18 @@
         } else {
           setOllamaMessage(`Current: ${current}`, "ok");
         }
-        ollamaModelEl.disabled = false;
-        ollamaSaveBtn.disabled = true;
       } catch (err) {
-        const current = await invoke("get_ollama_model").catch(() => "");
-        currentOllamaModel = current;
-        ollamaModelEl.value = current;
-        ollamaModelEl.disabled = false;
-        ollamaSaveBtn.disabled = true;
+        current = await invoke("get_ollama_model").catch(() => "");
+        // Ollama unreachable: still offer the default so it stays pickable.
+        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
         setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
       }
+      currentOllamaModel = current;
+      ollamaModelEl.value = current;
+      ollamaModelEl.placeholder = "gemma3:1b";
+      ollamaModelEl.disabled = false;
+      ollamaSaveBtn.disabled = true;
+      renderComboList();
     }
     loadOllamaModels();
 
@@ -368,13 +463,30 @@
       }
     });
 
-    ollamaModelEl.addEventListener("input", () => {
+    function onOllamaInput() {
       const value = ollamaModelEl.value.trim();
       ollamaSaveBtn.disabled = value === currentOllamaModel || !value;
       setOllamaMessage(
         value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
         value === currentOllamaModel ? "ok" : ""
       );
+    }
+    ollamaModelEl.addEventListener("input", onOllamaInput);
+    ollamaModelEl.addEventListener("focus", openComboList);
+    ollamaToggleEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (ollamaListEl.classList.contains("open")) {
+        closeComboList();
+      } else {
+        openComboList();
+        ollamaModelEl.focus();
+      }
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".combo-wrap")) closeComboList();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeComboList();
     });
 
     ollamaSaveBtn.addEventListener("click", async () => {

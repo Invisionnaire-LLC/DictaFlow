@@ -497,7 +497,6 @@ fn position_hud(window: &tauri::WebviewWindow) {
         let size = monitor.size();
         let scale = monitor.scale_factor();
         let hud_w_physical = (64.0 * scale) as i32;
-        let hud_h_physical = (36.0 * scale) as i32;
         // Sit just to the left of the notch, in the menu bar zone.
         // Notch is ~200 logical px wide, centered. Right edge of HUD lands
         // ~6 logical px left of the notch's left edge.
