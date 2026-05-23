@@ -1,22 +1,22 @@
 # DictaFlow
 
-Local-first, cross-platform dictation. Hold a hotkey, speak, release — cleaned text lands at your cursor. All processing runs on your machine. MIT licensed. By **Invisionnaire**.
+Local-first, cross-platform dictation. Hold a hotkey, speak, release. Cleaned text lands at your cursor. All processing runs on your machine. MIT licensed. By **Invisionnaire**.
 
 ---
 
-## Status — April 2026
+## Status (April 2026)
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 — Tracer bullet | Tray, hotkey, mic capture, synthesized paste | Done |
-| 2 — Audio DSP + HUD | 16 kHz mono, DC/HPF/silence trim, RMS meter, floating pill | Done |
-| 3 — ASR | `whisper-rs` + `large-v3-turbo`, Metal on macOS | Done |
-| 4 — Cleanup | Rules + Ollama (`gemma3:1b`) with 800 ms timeout + fallback | Done |
-| 5 — End-to-end pipeline | Hotkey → audio → ASR → cleanup → paste | Done |
-| 6 — UI polish | Tray menu, HUD, settings window, About window | Done |
-| 7 — macOS bundling | Signed `.app`, LSUIElement, mic usage string, Accessibility gate | Done |
-| 8 — Windows / Linux | Target-conditional whisper features (CUDA / CPU) | Scaffolded, untested |
-| 9 — Release infra | GitHub Actions, notarization, DMG | Not started |
+| 1: Tracer bullet | Tray, hotkey, mic capture, synthesized paste | Done |
+| 2: Audio DSP + HUD | 16 kHz mono, DC/HPF/silence trim, RMS meter, floating pill | Done |
+| 3: ASR | `whisper-rs` + `large-v3-turbo`, Metal on macOS | Done |
+| 4: Cleanup | Rules + Ollama (`gemma3:1b`) with 800 ms timeout + fallback | Done |
+| 5: End-to-end pipeline | Hotkey → audio → ASR → cleanup → paste | Done |
+| 6: UI polish | Tray menu, HUD, settings window, About window | Done |
+| 7: macOS bundling | Signed `.app`, LSUIElement, mic usage string, Accessibility gate | Done |
+| 8: Windows / Linux | Target-conditional whisper features (CUDA / CPU) | Scaffolded, untested |
+| 9: Release infra | GitHub Actions, notarization, DMG | Not started |
 
 See [docs/COMPETITOR-GAP.md](docs/COMPETITOR-GAP.md) for a Wispr Flow feature comparison and prioritized gap list.
 
@@ -25,7 +25,7 @@ See [docs/COMPETITOR-GAP.md](docs/COMPETITOR-GAP.md) for a Wispr Flow feature co
 ## How it works
 
 ```
-Hotkey pressed  (default F9 — configurable in Settings)
+Hotkey pressed  (default F9, configurable in Settings)
     │
     ▼
 AudioController (cpal)  ──►  16 kHz mono f32 buffer
@@ -49,14 +49,14 @@ HybridCleaner
                        falls back to rules output on failure)
     │
     ▼
-Paster (arboard + enigo) — save clipboard, write text,
+Paster (arboard + enigo): save clipboard, write text,
                             synth Ctrl/Cmd+V, restore clipboard
     │
     ▼
 Paste at cursor
 ```
 
-Each module is a leaf in [src-tauri/src/](src-tauri/src/) — swap any backend by replacing one file.
+Each module is a leaf in [src-tauri/src/](src-tauri/src/). Swap any backend by replacing one file.
 
 ---
 
@@ -68,9 +68,9 @@ Each module is a leaf in [src-tauri/src/](src-tauri/src/) — swap any backend b
 | CMake ≥ 3.20 | Builds `whisper-rs` C++ backend |
 | LLVM ≥ 15 (libclang) | `whisper-rs` bindgen |
 | Xcode Command Line Tools (macOS) / Visual Studio Build Tools (Windows) | C++ toolchain |
-| Tauri CLI (`cargo install tauri-cli --version "^2.0"`) | Only for `.app` / installer builds — `cargo run` works without it |
-| Ollama | Optional — enables LLM cleanup. Without it, rules-only cleanup still runs. |
-| NVIDIA CUDA toolkit | Optional, Windows only — required if you want GPU-accelerated Whisper |
+| Tauri CLI (`cargo install tauri-cli --version "^2.0"`) | Only for `.app` / installer builds; `cargo run` works without it |
+| Ollama | Optional. Enables LLM cleanup. Without it, rules-only cleanup still runs. |
+| NVIDIA CUDA toolkit | Optional, Windows only. Required if you want GPU-accelerated Whisper |
 
 ---
 
@@ -103,7 +103,7 @@ Builds are signed automatically with the identity in [src-tauri/tauri.conf.json]
 ./scripts/release-macos.sh
 ```
 
-After the Account Holder creates a **Developer ID Application** certificate, update `signingIdentity` in `tauri.conf.json`, then re-run the script — notarization uses the API key in `scripts/apple-release.env` (copy from `apple-release.env.example`). You still re-grant Accessibility once when the signing identity changes; Developer ID makes that grant survive rebuilds.
+After the Account Holder creates a **Developer ID Application** certificate, update `signingIdentity` in `tauri.conf.json`, then re-run the script. Notarization uses the API key in `scripts/apple-release.env` (copy from `apple-release.env.example`). You still re-grant Accessibility once when the signing identity changes; Developer ID makes that grant survive rebuilds.
 
 ### Windows
 
@@ -160,14 +160,14 @@ Without Ollama, DictaFlow silently falls back to rules-only cleanup. The app nev
 
 ## Daily use
 
-1. Click into any text field (Notes, Slack, browser, terminal — anywhere).
+1. Click into any text field (Notes, Slack, browser, terminal, anywhere).
 2. Hold your hotkey (default **F9**, change in Settings), speak, release.
 3. Cleaned text appears at your cursor.
 
-The tray icon (frog in your menu bar / system tray) is the home for the app — right-click it for the menu:
+The tray icon (frog in your menu bar / system tray) is the home for the app. Right-click it for the menu:
 
-- **About DictaFlow** — version info
-- **Settings…** — change hotkey, select microphone, reposition the HUD
+- **About DictaFlow**: version info
+- **Settings…**: change hotkey, select microphone, reposition the HUD
 - **Quit**
 
 The floating HUD pill shows state:

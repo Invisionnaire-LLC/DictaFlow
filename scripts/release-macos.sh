@@ -30,5 +30,5 @@ echo
 echo "Next steps (manual):"
 echo "  1. Account Holder: create Developer ID Application cert → update tauri.conf.json signingIdentity"
 echo "  2. App Store Connect: Apps → + → macOS → DictaFlow (bundle com.invisionnaire.dictaflow)"
-echo "  3. Re-run this script — Tauri will notarize when Developer ID + APPLE_API_* env are set"
+echo "  3. Re-run this script. Tauri will notarize when Developer ID + APPLE_API_* env are set"
 echo "  4. After first signed build: grant Accessibility once in Settings → Permissions"

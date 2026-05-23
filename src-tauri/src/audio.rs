@@ -12,6 +12,7 @@ pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 pub const MIN_DURATION_SECS: f32 = 0.3;
 pub const MAX_DURATION_SECS: f32 = 60.0;
 
+#[derive(Clone)]
 pub struct PcmBuffer {
     pub samples: Vec<f32>,
     pub sample_rate: u32,

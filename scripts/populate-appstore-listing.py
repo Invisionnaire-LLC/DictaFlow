@@ -19,11 +19,11 @@ INFO_ID = "c3467077-2484-49ff-9508-2c7b2a806337"
 VERSION_LOC_ID = "c01e7439-a4f1-4e57-b7ef-029be2e13886"
 INFO_LOC_ID = "621554f5-1337-4989-b7f4-88b7e663f85b"
 
-DESCRIPTION = """DictaFlow is local-first dictation for Mac. Hold a hotkey, speak, release — cleaned text appears at your cursor. No cloud account required.
+DESCRIPTION = """DictaFlow is local first dictation for Mac. Hold a hotkey, speak, release. Cleaned text appears at your cursor. No cloud account required.
 
 FEATURES
 • Dictate anywhere you type with a global hotkey (hold or tap to start/stop)
-• Transcribes locally with Whisper — your voice stays on your Mac
+• Transcribes locally with Whisper. Your voice stays on your Mac
 • Cleans up punctuation, fillers, and spacing with on-device rules
 • Optional Ollama cleanup for smarter phrasing (runs locally)
 • Menu bar app with a draggable HUD pill and live transcript preview
@@ -34,7 +34,7 @@ DictaFlow asks for Microphone (record), Accessibility (paste at your cursor), an
 
 Built by Invisionnaire."""
 
-PROMO = "Speak naturally. DictaFlow transcribes and pastes locally — no cloud, no subscription."
+PROMO = "Speak naturally. DictaFlow transcribes and pastes locally. No cloud, no subscription."
 KEYWORDS = "dictation,transcription,whisper,voice typing,speech to text,local,privacy,productivity,ollama"
 WHATS_NEW = "Initial Mac release: local Whisper transcription, Ollama cleanup, global hotkey dictation, and menu bar HUD."
 SUBTITLE = "Local dictation at your cursor"
@@ -171,6 +171,7 @@ def main() -> None:
     if review.get("data"):
         review_id = review["data"]["id"]
         review_body["data"]["id"] = review_id
+        del review_body["data"]["relationships"]
         api("PATCH", f"/v1/appStoreReviewDetails/{review_id}", review_body)
         print("updated app review contact details")
     else:

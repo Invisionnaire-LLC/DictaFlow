@@ -136,7 +136,7 @@
 
       <div class="row">
         <label>Current</label>
-        <div id="current" class="combo">—</div>
+        <div id="current" class="combo">-</div>
       </div>
 
       <div class="row">
@@ -145,7 +145,7 @@
       </div>
 
       <div class="hint">
-        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space). Hold the key to talk, or tap twice to start/stop — useful for mouse side buttons that send a quick key press.
+        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space). Hold the key to talk, or tap twice to start/stop. Useful for mouse side buttons that send a quick key press.
       </div>
 
       <div id="hkMsg" class="msg"></div>
@@ -164,8 +164,8 @@
       <div class="row">
         <label>Style</label>
         <select id="hudStyle" class="combo">
-          <option value="classic">Classic — bottom pill + waveform</option>
-          <option value="notch">Notch — top bar</option>
+          <option value="classic">Classic: bottom pill + waveform</option>
+          <option value="notch">Notch: top bar</option>
         </select>
       </div>
 
@@ -250,7 +250,7 @@
         <button id="micOpen">Open Microphone Settings</button>
       </div>
       <div class="hint">
-        First time setup: click <b>Request Accessibility</b>. macOS will prompt you and add <b>dictaflow</b> to the list — then toggle it on.
+        First time setup: click <b>Request Accessibility</b>. macOS will prompt you and add <b>dictaflow</b> to the list. Then toggle it on.
       </div>
     </div>
 
@@ -286,7 +286,7 @@
     let currentOllamaModel = "";
 
     function displayHotkey(h) {
-      if (!h || !h.code) return "—";
+      if (!h || !h.code) return "-";
       const parts = (h.modifiers || []).slice();
       parts.push(h.code);
       return parts.join(" + ");
@@ -353,7 +353,7 @@
     }
 
     function openComboList() {
-      renderComboList(); // always shows the full list — it's a picker, not a search
+      renderComboList(); // always shows the full list (picker, not search)
       ollamaListEl.classList.add("open");
       ollamaToggleEl.setAttribute("aria-expanded", "true");
     }
@@ -555,7 +555,7 @@
           axStatusEl.textContent = "Granted ✓";
           axStatusEl.style.color = "#a5d6a7";
         } else {
-          axStatusEl.textContent = "Not granted — paste will silently fail";
+          axStatusEl.textContent = "Not granted. Paste will silently fail.";
           axStatusEl.style.color = "#ef9a9a";
         }
       } catch (e) {
