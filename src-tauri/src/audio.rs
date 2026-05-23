@@ -201,9 +201,10 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
                 move |data: &[u16], _| {
                     let mut guard = buf.lock();
                     let before = guard.len();
-                    guard.extend(data.iter().map(|&s| {
-                        (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
-                    }));
+                    guard
+                        .extend(data.iter().map(|&s| {
+                            (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
+                        }));
                     let _ = ltx.send(rms(&guard[before..]));
                 },
                 err_fn,

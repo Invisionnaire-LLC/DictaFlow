@@ -54,6 +54,12 @@ pub struct Settings {
     /// HUD appearance: "classic" (bottom pill + waveform) or "notch" (top minimal bar).
     #[serde(default)]
     pub hud_style: Option<String>,
+    /// Show Whisper partial text in the HUD while recording.
+    #[serde(default)]
+    pub live_transcript: Option<bool>,
+    /// Keep the HUD pill above other windows (when false, it only floats up while dictating).
+    #[serde(default)]
+    pub hud_always_on_top: Option<bool>,
     #[serde(default)]
     pub hud_anchor: Option<HudAnchor>,
     #[serde(default)]

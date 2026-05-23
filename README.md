@@ -97,7 +97,13 @@ cp -R target/release/bundle/macos/DictaFlow.app /Applications/
 open /Applications/DictaFlow.app
 ```
 
-The signing identity in [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json) points to a specific Apple Development cert. Change it to your own via `security find-identity -v -p codesigning`, or remove the `signingIdentity` key to fall back to ad-hoc signing (you'll re-grant TCC permissions on every rebuild).
+Builds are signed automatically with the identity in [src-tauri/tauri.conf.json](src-tauri/tauri.conf.json) (currently **Apple Development**). For release builds:
+
+```bash
+./scripts/release-macos.sh
+```
+
+After the Account Holder creates a **Developer ID Application** certificate, update `signingIdentity` in `tauri.conf.json`, then re-run the script — notarization uses the API key in `scripts/apple-release.env` (copy from `apple-release.env.example`). You still re-grant Accessibility once when the signing identity changes; Developer ID makes that grant survive rebuilds.
 
 ### Windows
 

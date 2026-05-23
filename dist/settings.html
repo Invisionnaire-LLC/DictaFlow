@@ -7,7 +7,8 @@
     html, body {
       margin: 0;
       padding: 0;
-      height: 100%;
+      min-height: 100%;
+      overflow-y: auto;
       font-family: -apple-system, Segoe UI, Roboto, sans-serif;
       background: #1e1e22;
       color: #e8e8ec;
@@ -131,7 +132,7 @@
   <div class="wrap">
     <div class="section">
       <h1>Hotkey</h1>
-      <div class="sub">The key you hold to dictate. Click below and press a key (optionally with modifiers).</div>
+      <div class="sub">Hold to dictate, or tap once to start and tap again to stop (works with mouse buttons).</div>
 
       <div class="row">
         <label>Current</label>
@@ -144,7 +145,7 @@
       </div>
 
       <div class="hint">
-        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space).
+        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space). Hold the key to talk, or tap twice to start/stop — useful for mouse side buttons that send a quick key press.
       </div>
 
       <div id="hkMsg" class="msg"></div>
@@ -152,6 +153,38 @@
       <div class="inline-actions">
         <button id="save" class="primary" disabled>Save hotkey</button>
       </div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <h1 style="margin-top: 18px">HUD</h1>
+      <div class="sub">Pick a style, then drag the pill where you want it.</div>
+
+      <div class="row">
+        <label>Style</label>
+        <select id="hudStyle" class="combo">
+          <option value="classic">Classic — bottom pill + waveform</option>
+          <option value="notch">Notch — top bar</option>
+        </select>
+      </div>
+
+      <div class="row check-row">
+        <input id="hudAlwaysOnTop" type="checkbox" />
+        <label for="hudAlwaysOnTop">Keep HUD above other windows</label>
+      </div>
+
+      <div class="row check-row">
+        <input id="liveTranscript" type="checkbox" />
+        <label for="liveTranscript">Show live transcript while recording</label>
+      </div>
+
+      <div class="inline-actions">
+        <button id="resetHudPosition" type="button">Reset pill position</button>
+      </div>
+      <div class="hint">Use reset if the pill disappears off-screen or behind other windows.</div>
+
+      <div id="hudStyleMsg" class="msg"></div>
     </div>
 
     <hr />
@@ -221,23 +254,6 @@
       </div>
     </div>
 
-    <hr />
-
-    <div class="section">
-      <h1 style="margin-top: 18px">HUD</h1>
-      <div class="sub">Pick a style, then drag the pill where you want it. The position saves automatically.</div>
-
-      <div class="row">
-        <label>Style</label>
-        <select id="hudStyle" class="combo">
-          <option value="classic">Classic — bottom pill + waveform</option>
-          <option value="notch">Notch — top bar + live transcript</option>
-        </select>
-      </div>
-
-      <div id="hudStyleMsg" class="msg"></div>
-    </div>
-
     <div class="actions">
       <button id="close">Close</button>
     </div>
@@ -262,6 +278,9 @@
 
     const hudStyleEl = document.getElementById("hudStyle");
     const hudStyleMsgEl = document.getElementById("hudStyleMsg");
+    const hudAlwaysOnTopEl = document.getElementById("hudAlwaysOnTop");
+    const liveTranscriptEl = document.getElementById("liveTranscript");
+    const resetHudPositionBtn = document.getElementById("resetHudPosition");
 
     let pending = null;
     let currentOllamaModel = "";
@@ -563,12 +582,65 @@
 
     async function loadHudStyle() {
       try {
-        hudStyleEl.value = await invoke("get_hud_style");
+        const [style, alwaysOnTop, liveTranscript] = await Promise.all([
+          invoke("get_hud_style"),
+          invoke("get_hud_always_on_top"),
+          invoke("get_live_transcript"),
+        ]);
+        hudStyleEl.value = style;
+        hudAlwaysOnTopEl.checked = alwaysOnTop;
+        liveTranscriptEl.checked = liveTranscript;
       } catch (err) {
         console.error(err);
       }
     }
     loadHudStyle();
+
+    hudAlwaysOnTopEl.addEventListener("change", async () => {
+      hudStyleMsgEl.textContent = "";
+      hudStyleMsgEl.className = "msg";
+      try {
+        const enabled = await invoke("set_hud_always_on_top", { enabled: hudAlwaysOnTopEl.checked });
+        hudAlwaysOnTopEl.checked = enabled;
+        hudStyleMsgEl.textContent = enabled
+          ? "HUD stays above other windows."
+          : "HUD only floats up while dictating.";
+        hudStyleMsgEl.className = "msg ok";
+      } catch (err) {
+        hudStyleMsgEl.textContent = String(err);
+        hudStyleMsgEl.className = "msg err";
+      }
+    });
+
+    resetHudPositionBtn.addEventListener("click", async () => {
+      hudStyleMsgEl.textContent = "";
+      hudStyleMsgEl.className = "msg";
+      resetHudPositionBtn.disabled = true;
+      try {
+        await invoke("reset_hud_position");
+        hudStyleMsgEl.textContent = "Pill moved to default position.";
+        hudStyleMsgEl.className = "msg ok";
+      } catch (err) {
+        hudStyleMsgEl.textContent = String(err);
+        hudStyleMsgEl.className = "msg err";
+      } finally {
+        resetHudPositionBtn.disabled = false;
+      }
+    });
+
+    liveTranscriptEl.addEventListener("change", async () => {
+      hudStyleMsgEl.textContent = "";
+      hudStyleMsgEl.className = "msg";
+      try {
+        const enabled = await invoke("set_live_transcript", { enabled: liveTranscriptEl.checked });
+        liveTranscriptEl.checked = enabled;
+        hudStyleMsgEl.textContent = enabled ? "Live transcript on." : "Live transcript off.";
+        hudStyleMsgEl.className = "msg ok";
+      } catch (err) {
+        hudStyleMsgEl.textContent = String(err);
+        hudStyleMsgEl.className = "msg err";
+      }
+    });
 
     hudStyleEl.addEventListener("change", async () => {
       hudStyleMsgEl.textContent = "";

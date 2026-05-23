@@ -28,7 +28,9 @@
     "shortDescription": "Local-first dictation tool",
     "longDescription": "Hold a hotkey, speak, release. DictaFlow transcribes locally with Whisper and cleans up with Ollama.",
     "macOS": {
-      "hardenedRuntime": false
+      "signingIdentity": "Apple Development: Adrian Rosario (P36K8WNUX6)",
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true
     }
   }
 }

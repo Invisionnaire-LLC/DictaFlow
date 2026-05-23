@@ -17,7 +17,12 @@ pub struct HistoryEntry {
     pub audio_path: Option<String>,
 }
 
-pub fn append(raw: &str, cleaned: &str, duration_secs: f32, audio_path: Option<String>) -> Result<HistoryEntry> {
+pub fn append(
+    raw: &str,
+    cleaned: &str,
+    duration_secs: f32,
+    audio_path: Option<String>,
+) -> Result<HistoryEntry> {
     let entry = HistoryEntry {
         id: new_id(),
         created_at: chrono::Local::now().to_rfc3339(),
@@ -54,9 +59,7 @@ pub fn search(query: &str) -> Result<Vec<HistoryEntry>> {
     }
     Ok(entries
         .into_iter()
-        .filter(|e| {
-            e.raw.to_lowercase().contains(&q) || e.cleaned.to_lowercase().contains(&q)
-        })
+        .filter(|e| e.raw.to_lowercase().contains(&q) || e.cleaned.to_lowercase().contains(&q))
         .collect())
 }
 

@@ -27,3 +27,6 @@ Thumbs.db
 
 # Local build wrapper (machine-specific paths)
 build.bat
+
+# Apple release secrets (copy from scripts/apple-release.env.example)
+scripts/apple-release.env

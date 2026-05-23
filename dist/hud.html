@@ -109,7 +109,14 @@
       display: none;
     }
     #preview span { display: inline-block; }
-    body[data-layout="expanded"][data-style="notch"] #preview { display: block; }
+    body[data-layout="expanded"][data-live-transcript="on"] #preview { display: block; }
+    body[data-layout="expanded"][data-style="classic"][data-live-transcript="on"] #bars {
+      display: none;
+    }
+    body[data-layout="expanded"][data-style="classic"][data-live-transcript="on"] .pill {
+      justify-content: flex-start;
+      gap: 6px;
+    }
     #preview.empty span {
       color: rgba(255, 255, 255, 0.45);
       font-style: italic;
@@ -148,7 +155,7 @@
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
-<body data-state="idle" data-layout="compact" data-style="notch">
+<body data-state="idle" data-layout="compact" data-style="notch" data-live-transcript="on">
   <div class="shell">
     <div class="pill">
       <div id="preview" class="empty"><span>Listening…</span></div>
@@ -206,6 +213,32 @@
     }
     animateBars();
 
+    function setLiveTranscript(enabled) {
+      body.dataset.liveTranscript = enabled ? 'on' : 'off';
+      if (!enabled) {
+        previewTextEl.textContent = '';
+        previewEl.classList.add('empty');
+        previewEl.scrollLeft = 0;
+      }
+    }
+
+    function applyHudLayout(expanded) {
+      const transcriptOn = body.dataset.liveTranscript === 'on';
+      const style = body.dataset.style;
+      const shouldLayout = style === 'notch' || (style === 'classic' && transcriptOn);
+      if (!shouldLayout) return;
+      body.dataset.layout = expanded ? 'expanded' : 'compact';
+      if (expanded && transcriptOn) {
+        previewTextEl.textContent = 'Listening…';
+        previewEl.classList.add('empty');
+        previewEl.scrollLeft = 0;
+      } else if (!expanded) {
+        previewTextEl.textContent = '';
+        previewEl.classList.add('empty');
+        previewEl.scrollLeft = 0;
+      }
+    }
+
     async function setup() {
       if (!window.__TAURI__?.event) return false;
       const { listen } = window.__TAURI__.event;
@@ -217,20 +250,14 @@
         currentRms = Math.min(1, Math.max(0, Number(e.payload) || 0));
       });
       await listen('hud_layout', (e) => {
-        if (body.dataset.style !== 'notch') return;
-        body.dataset.layout = e.payload === 'expanded' ? 'expanded' : 'compact';
-        if (e.payload === 'expanded') {
-          previewTextEl.textContent = 'Listening…';
-          previewEl.classList.add('empty');
-          previewEl.scrollLeft = 0;
-        } else {
-          previewTextEl.textContent = '';
-          previewEl.classList.add('empty');
-          previewEl.scrollLeft = 0;
-        }
+        applyHudLayout(e.payload === 'expanded');
       });
       await listen('partial', (e) => {
-        if (body.dataset.style === 'notch') setPreview(e.payload);
+        if (body.dataset.liveTranscript !== 'on') return;
+        setPreview(e.payload);
+      });
+      await listen('live_transcript', (e) => {
+        setLiveTranscript(Boolean(e.payload));
       });
       await listen('hud_style', (e) => {
         body.dataset.style = String(e.payload) === 'classic' ? 'classic' : 'notch';
@@ -238,6 +265,7 @@
       if (window.__TAURI__?.core?.invoke) {
         try {
           body.dataset.style = await window.__TAURI__.core.invoke('get_hud_style');
+          setLiveTranscript(await window.__TAURI__.core.invoke('get_live_transcript'));
         } catch (_) {}
       }
       return true;
