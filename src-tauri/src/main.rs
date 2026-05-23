@@ -165,6 +165,8 @@ fn main() {
             hud_edit_start,
             hud_edit_save,
             hud_edit_cancel,
+            get_hud_style,
+            set_hud_style,
             check_accessibility,
             prompt_accessibility,
             open_accessibility_settings,
@@ -351,8 +353,7 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     if app.get_webview_window("hud").is_some() {
         return Ok(());
     }
-    let width = 64.0;
-    let height = 36.0;
+    let (width, height) = hud_size(&hud_style());
 
     let window = WebviewWindowBuilder::new(app, "hud", WebviewUrl::App("hud.html".into()))
         .title("DictaFlow HUD")
@@ -490,6 +491,7 @@ fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
 fn set_hud_draggable(_window: &tauri::WebviewWindow, _draggable: bool) {}
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked separately
 fn activate_application() {
     use cocoa::base::{id, YES};
     use objc::{class, msg_send, sel, sel_impl};
@@ -501,6 +503,7 @@ fn activate_application() {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked separately
 fn order_window_front(window: &WebviewWindow) {
     use cocoa::base::{id, nil};
     use objc::{msg_send, sel, sel_impl};
@@ -575,7 +578,10 @@ fn open_auxiliary_window(
         .build()?;
 
     window.on_window_event(move |event| {
-        if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+        if matches!(
+            event,
+            WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed
+        ) {
             restore_menu_bar_activation_policy(&app_for_close);
         }
     });
@@ -584,25 +590,52 @@ fn open_auxiliary_window(
     Ok(())
 }
 
+fn hud_style() -> String {
+    settings::Settings::load()
+        .hud_style
+        .unwrap_or_else(|| "classic".to_string())
+}
+
+/// Logical (width, height) of the HUD window for a given style.
+fn hud_size(style: &str) -> (f64, f64) {
+    if style == "notch" {
+        (64.0, 36.0)
+    } else {
+        (110.0, 40.0)
+    }
+}
+
 fn position_hud(window: &tauri::WebviewWindow) {
-    let saved = settings::Settings::load().hud_position;
-    if let Some(pos) = saved {
+    let settings = settings::Settings::load();
+    let style = settings.hud_style.as_deref().unwrap_or("classic");
+    let (w, h) = hud_size(style);
+    let _ = window.set_size(LogicalSize::new(w, h));
+
+    if let Some(pos) = settings.hud_position {
         let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
-    } else if let Some(monitor) = window.current_monitor().ok().flatten() {
-        let size = monitor.size();
-        let scale = monitor.scale_factor();
-        let hud_w_physical = (64.0 * scale) as i32;
+        return;
+    }
+    let Some(monitor) = window.current_monitor().ok().flatten() else {
+        return;
+    };
+    let size = monitor.size();
+    let scale = monitor.scale_factor();
+    let hud_w_physical = (w * scale) as i32;
+    let hud_h_physical = (h * scale) as i32;
+    if style == "notch" {
         // Sit just to the left of the notch, in the menu bar zone.
-        // Notch is ~200 logical px wide, centered. Right edge of HUD lands
-        // ~6 logical px left of the notch's left edge.
         let center_x = size.width as i32 / 2;
         let notch_half_physical = (100.0 * scale) as i32;
         let gap_physical = (6.0 * scale) as i32;
         let x = center_x - notch_half_physical - gap_physical - hud_w_physical;
         let y = (2.0 * scale) as i32;
         let _ = window.set_position(PhysicalPosition::new(x, y));
+    } else {
+        // Classic: centered, 120 logical px from the bottom (clears the Dock).
+        let x = (size.width as i32 - hud_w_physical) / 2;
+        let y = size.height as i32 - hud_h_physical - (120.0 * scale) as i32;
+        let _ = window.set_position(PhysicalPosition::new(x, y));
     }
-    let _ = window.set_size(LogicalSize::new(64.0, 36.0));
 }
 
 fn show_about(app: AppHandle) -> tauri::Result<()> {
@@ -784,6 +817,26 @@ fn hud_edit_cancel(app: AppHandle) -> Result<(), String> {
     set_hud_draggable(&hud, false);
     let _ = hud.emit("hud_edit", false);
     Ok(())
+}
+
+#[tauri::command]
+fn get_hud_style() -> String {
+    hud_style()
+}
+
+#[tauri::command]
+fn set_hud_style(app: AppHandle, style: String) -> Result<String, String> {
+    let style = if style == "notch" { "notch" } else { "classic" }.to_string();
+    let mut saved = settings::Settings::load();
+    saved.hud_style = Some(style.clone());
+    // Each style has its own home position, so drop any manual drag on switch.
+    saved.hud_position = None;
+    saved.save().map_err(|e| format!("save: {}", e))?;
+    if let Some(hud) = app.get_webview_window("hud") {
+        position_hud(&hud);
+        let _ = hud.emit("hud_style", &style);
+    }
+    Ok(style)
 }
 
 fn spawn_rms_forwarder(app: AppHandle, rx: mpsc::Receiver<f32>) {
