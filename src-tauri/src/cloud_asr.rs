@@ -21,6 +21,11 @@ const OPENAI_TRANSLATE_ENDPOINT: &str = "https://api.openai.com/v1/audio/transla
 const GROQ_DEFAULT_MODEL: &str = "whisper-large-v3";
 const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-transcribe";
 
+/// Cloud transcription APIs cap the bias `prompt`. Groq rejects prompts over 896
+/// characters with HTTP 400; OpenAI truncates to its token budget. We trim to a
+/// safe length (at a comma boundary) so a long custom vocabulary never errors.
+const MAX_PROMPT_CHARS: usize = 880;
+
 /// Where transcription runs. `Local` keeps everything offline (default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -160,9 +165,9 @@ impl CloudTranscriber {
                 form = form.text("language", code);
             }
         }
-        let prompt = prompt.trim();
+        let prompt = cap_prompt(prompt.trim());
         if !prompt.is_empty() {
-            form = form.text("prompt", prompt.to_string());
+            form = form.text("prompt", prompt);
         }
 
         let start = std::time::Instant::now();
@@ -197,6 +202,26 @@ impl CloudTranscriber {
         );
         Ok(text)
     }
+}
+
+/// Trim the bias prompt to `MAX_PROMPT_CHARS`, cutting at the last comma so we
+/// never split a word or a multi-byte char. Counts Unicode chars (what the API
+/// limits), not bytes.
+fn cap_prompt(prompt: &str) -> String {
+    if prompt.chars().count() <= MAX_PROMPT_CHARS {
+        return prompt.to_string();
+    }
+    let truncated: String = prompt.chars().take(MAX_PROMPT_CHARS).collect();
+    let trimmed = match truncated.rfind(',') {
+        Some(i) => &truncated[..i],
+        None => truncated.as_str(),
+    };
+    tracing::debug!(
+        "cloud prompt capped from {} to {} chars",
+        prompt.chars().count(),
+        trimmed.chars().count()
+    );
+    trimmed.trim().to_string()
 }
 
 /// Encode mono f32 PCM into a 16-bit WAV in memory.
@@ -247,6 +272,29 @@ mod tests {
         assert_eq!(t.resolved_model(), OPENAI_DEFAULT_MODEL);
         let t = CloudTranscriber::new(Backend::Groq, "k".into(), "custom-model".into());
         assert_eq!(t.resolved_model(), "custom-model");
+    }
+
+    #[test]
+    fn cap_prompt_leaves_short_prompts_untouched() {
+        assert_eq!(cap_prompt("DictaFlow, José, café"), "DictaFlow, José, café");
+    }
+
+    #[test]
+    fn cap_prompt_trims_long_prompts_under_limit_at_comma() {
+        let word = "palabra, ";
+        let long = word.repeat(200); // ~1800 chars
+        let capped = cap_prompt(&long);
+        assert!(capped.chars().count() <= MAX_PROMPT_CHARS);
+        assert!(!capped.ends_with(','));
+        // Trimmed at a comma boundary → ends on a whole word.
+        assert!(capped.ends_with("palabra"));
+    }
+
+    #[test]
+    fn cap_prompt_handles_multibyte_without_panic() {
+        let long = "ñoño, ".repeat(300); // multi-byte chars, ~1800 chars
+        let capped = cap_prompt(&long);
+        assert!(capped.chars().count() <= MAX_PROMPT_CHARS);
     }
 
     #[test]
