@@ -78,6 +78,21 @@
       width: 100% !important;
     }
 
+    body[data-style="cursor"] .pill {
+      position: static;
+      width: 100% !important;
+      border-radius: 16px;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 8px;
+      cursor: default;
+      -webkit-app-region: no-drag;
+      app-region: no-drag;
+    }
+    body[data-style="cursor"][data-layout="expanded"] .pill {
+      width: 100% !important;
+    }
+
     body[data-style="notch"] .pill {
       background: #000;
       border-radius: 0 0 0 14px;
@@ -110,10 +125,84 @@
     }
     #preview span { display: inline-block; }
     body[data-layout="expanded"][data-live-transcript="on"] #preview { display: block; }
+
+    #learn-toast {
+      display: none;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      order: 0;
+    }
+    #learn-toast .learn-toast-icon {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: rgba(125, 206, 160, 0.18);
+      color: #7dcea0;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 18px;
+      text-align: center;
+    }
+    #learn-toast .learn-toast-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    #learn-toast .learn-toast-title {
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.2;
+      color: rgba(255, 255, 255, 0.96);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #learn-toast .learn-toast-detail {
+      font-size: 10px;
+      line-height: 1.15;
+      color: rgba(255, 255, 255, 0.68);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    body[data-toast="learn"] #learn-toast { display: flex; }
+    body[data-toast="learn"] #preview,
+    body[data-toast="learn"] #bars,
+    body[data-toast="learn"] #spinner { display: none !important; }
+    body[data-toast="learn"] .pill {
+      width: 100% !important;
+      min-width: 220px;
+      max-width: 280px;
+      opacity: 1 !important;
+      justify-content: flex-start;
+      padding: 0 8px;
+      gap: 6px;
+      background: rgba(20, 26, 22, 0.94);
+      border: 1px solid rgba(125, 206, 160, 0.28);
+      animation: toast-in 0.18s var(--ease);
+    }
+    body[data-toast="learn"][data-style="notch"] .pill {
+      border-radius: 0 0 0 14px;
+    }
+    @keyframes toast-in {
+      from { opacity: 0.4; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     body[data-layout="expanded"][data-style="classic"][data-live-transcript="on"] #bars {
       display: none;
     }
     body[data-layout="expanded"][data-style="classic"][data-live-transcript="on"] .pill {
+      justify-content: flex-start;
+      gap: 6px;
+    }
+    body[data-layout="expanded"][data-style="cursor"][data-live-transcript="on"] #bars {
+      display: none;
+    }
+    body[data-layout="expanded"][data-style="cursor"][data-live-transcript="on"] .pill {
       justify-content: flex-start;
       gap: 6px;
     }
@@ -130,6 +219,7 @@
       order: 2;
     }
     body[data-style="classic"] #bars { display: flex; }
+    body[data-style="cursor"] #bars { display: flex; }
     .bar {
       width: 4px;
       border-radius: 2px;
@@ -151,6 +241,7 @@
     }
     body[data-state="processing"] #spinner { display: block; }
     body[data-state="processing"][data-style="classic"] #bars { display: none; }
+    body[data-state="processing"][data-style="cursor"] #bars { display: none; }
     body[data-style="notch"] #bars { display: none !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
@@ -158,6 +249,13 @@
 <body data-state="idle" data-layout="compact" data-style="notch" data-live-transcript="on">
   <div class="shell">
     <div class="pill">
+      <div id="learn-toast" aria-live="polite">
+        <div class="learn-toast-icon" aria-hidden="true">✓</div>
+        <div class="learn-toast-copy">
+          <span class="learn-toast-title"></span>
+          <span class="learn-toast-detail"></span>
+        </div>
+      </div>
       <div id="preview" class="empty"><span>Listening…</span></div>
       <div id="bars">
         <div class="bar" style="height: 4px"></div>
@@ -177,9 +275,33 @@
     const body = document.body;
     const previewEl = document.getElementById('preview');
     const previewTextEl = previewEl.querySelector('span');
+    const learnToastEl = document.getElementById('learn-toast');
+    const learnToastTitleEl = learnToastEl.querySelector('.learn-toast-title');
+    const learnToastDetailEl = learnToastEl.querySelector('.learn-toast-detail');
     const bars = document.querySelectorAll('.bar');
     let currentRms = 0;
     let smoothed = 0;
+    let learnToastTimer = null;
+
+    function showLearnToast(from, to) {
+      const label = String(from || '').trim();
+      const replacement = String(to || '').trim();
+      if (!label || !replacement) return;
+
+      learnToastTitleEl.textContent = `"${label}" was learned`;
+      learnToastDetailEl.textContent = `Will use "${replacement}" next time`;
+      body.dataset.toast = 'learn';
+      body.dataset.layout = 'expanded';
+
+      if (learnToastTimer) clearTimeout(learnToastTimer);
+      learnToastTimer = setTimeout(() => {
+        body.dataset.toast = '';
+        if (body.dataset.state === 'idle' && body.dataset.liveTranscript !== 'on') {
+          body.dataset.layout = 'compact';
+        }
+        learnToastTimer = null;
+      }, 3200);
+    }
 
     function setPreview(text) {
       const trimmed = String(text || '').trim();
@@ -225,7 +347,7 @@
     function applyHudLayout(expanded) {
       const transcriptOn = body.dataset.liveTranscript === 'on';
       const style = body.dataset.style;
-      const shouldLayout = style === 'notch' || (style === 'classic' && transcriptOn);
+      const shouldLayout = style === 'notch' || ((style === 'classic' || style === 'cursor') && transcriptOn);
       if (!shouldLayout) return;
       body.dataset.layout = expanded ? 'expanded' : 'compact';
       if (expanded && transcriptOn) {
@@ -260,19 +382,13 @@
         setLiveTranscript(Boolean(e.payload));
       });
       await listen('hud_style', (e) => {
-        body.dataset.style = String(e.payload) === 'classic' ? 'classic' : 'notch';
+        const style = String(e.payload);
+        body.dataset.style = style === 'classic' || style === 'cursor' ? style : 'notch';
       });
       await listen('word_learned', (e) => {
         const item = e.payload || {};
         if (!item.from || !item.to) return;
-        setPreview(`Learned: ${item.from} → ${item.to}`);
-        body.dataset.layout = 'expanded';
-        setTimeout(() => {
-          if (body.dataset.state === 'idle') {
-            body.dataset.layout = 'compact';
-            setPreview('');
-          }
-        }, 2500);
+        showLearnToast(item.from, item.to);
       });
       if (window.__TAURI__?.core?.invoke) {
         try {

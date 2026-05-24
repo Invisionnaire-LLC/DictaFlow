@@ -1,7 +1,8 @@
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
@@ -99,7 +100,7 @@ pub struct Settings {
     pub hotkey: Option<Hotkey>,
     #[serde(default)]
     pub hud_position: Option<HudPosition>,
-    /// HUD appearance: "classic" (bottom pill + waveform) or "notch" (top minimal bar).
+    /// HUD appearance: "classic" (bottom pill + waveform), "notch" (top bar), or "cursor" (follows mouse).
     #[serde(default)]
     pub hud_style: Option<String>,
     /// Show Whisper partial text in the HUD while recording.
@@ -136,21 +137,13 @@ impl Settings {
         let Some(path) = settings_path() else {
             return Self::default();
         };
-        match fs::read_to_string(&path) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-                tracing::warn!("settings parse failed, using defaults: {:?}", e);
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        read_settings_file(&path).unwrap_or_default()
     }
 
+    /// Persist settings under an exclusive lock (all writes must go through here).
     pub fn save(&self) -> Result<()> {
-        let path = settings_path().ok_or_else(|| anyhow!("no settings path"))?;
-        let json = serde_json::to_string_pretty(self)?;
-        fs::write(&path, json)?;
-        tracing::info!("settings saved to {}", path.display());
-        Ok(())
+        let replacement = self.clone();
+        Self::update(|saved| *saved = replacement)
     }
 
     /// Reload settings under an exclusive lock, apply `patch`, then write atomically.
@@ -174,19 +167,56 @@ impl Settings {
             .lock_exclusive()
             .map_err(|e| anyhow!("settings lock: {}", e))?;
 
-        let mut settings = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                tracing::warn!("settings parse failed during update: {:?}", e);
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        };
+        let mut settings = read_settings_file(&path).unwrap_or_default();
         patch(&mut settings);
         let json = serde_json::to_string_pretty(&settings)?;
-        fs::write(&path, json)?;
+        write_atomic(&path, &json)?;
         tracing::info!("settings updated at {}", path.display());
         Ok(())
     }
+}
+
+fn read_settings_file(path: &Path) -> Result<Settings> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
+        Err(e) => return Err(e.into()),
+    };
+
+    match serde_json::from_str::<Settings>(&raw) {
+        Ok(settings) => Ok(settings),
+        Err(e) => {
+            backup_corrupt_file(path, "settings");
+            tracing::warn!(
+                "settings parse failed at {}: {:?}; backed up and using defaults",
+                path.display(),
+                e
+            );
+            Ok(Settings::default())
+        }
+    }
+}
+
+fn backup_corrupt_file(path: &Path, label: &str) {
+    if !path.exists() {
+        return;
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup = path.with_extension(format!("{label}.broken-{stamp}.json"));
+    match fs::rename(path, &backup) {
+        Ok(()) => tracing::warn!("backed up corrupt file to {}", backup.display()),
+        Err(e) => tracing::warn!("could not back up corrupt {}: {:?}", path.display(), e),
+    }
+}
+
+fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, contents).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))?;
+    Ok(())
 }
 
 fn settings_path() -> Option<PathBuf> {

@@ -303,15 +303,25 @@ pub fn initial_prompt() -> String {
 }
 
 pub fn is_model_downloaded() -> bool {
-    match model_path() {
-        Ok(p) => {
-            p.exists()
-                && p.metadata()
-                    .map(|m| m.len() > 1_000_000_000)
-                    .unwrap_or(false)
-        }
-        Err(_) => false,
+    model_path()
+        .ok()
+        .filter(|path| path.exists())
+        .is_some_and(|path| validate_model_file(&path).is_ok())
+}
+
+pub fn validate_model_file(path: &Path) -> Result<()> {
+    let len = fs::metadata(path)
+        .with_context(|| format!("stat {}", path.display()))?
+        .len();
+    if len != EXPECTED_BYTES {
+        return Err(anyhow!(
+            "model size mismatch at {}: got {} bytes, expected {}",
+            path.display(),
+            len,
+            EXPECTED_BYTES
+        ));
     }
+    Ok(())
 }
 
 pub fn download_model<F: FnMut(u64, u64)>(mut progress: F) -> Result<PathBuf> {
@@ -319,7 +329,17 @@ pub fn download_model<F: FnMut(u64, u64)>(mut progress: F) -> Result<PathBuf> {
     if is_model_downloaded() {
         return Ok(dest);
     }
+    if dest.exists() {
+        tracing::warn!(
+            "removing invalid whisper model at {} before re-download",
+            dest.display()
+        );
+        let _ = fs::remove_file(&dest);
+    }
     let tmp = dest.with_extension("bin.tmp");
+    if tmp.exists() {
+        let _ = fs::remove_file(&tmp);
+    }
 
     tracing::info!("downloading whisper model to {}", dest.display());
     let client = reqwest::blocking::Client::builder().timeout(None).build()?;
@@ -343,6 +363,24 @@ pub fn download_model<F: FnMut(u64, u64)>(mut progress: F) -> Result<PathBuf> {
     }
     file.flush()?;
     drop(file);
+
+    if downloaded != EXPECTED_BYTES {
+        let _ = fs::remove_file(&tmp);
+        return Err(anyhow!(
+            "download incomplete: got {} bytes, expected {}",
+            downloaded,
+            EXPECTED_BYTES
+        ));
+    }
+    if total != EXPECTED_BYTES {
+        tracing::warn!(
+            "content-length was {} but expected {}; downloaded bytes matched expected size",
+            total,
+            EXPECTED_BYTES
+        );
+    }
+
+    validate_model_file(&tmp)?;
     fs::rename(&tmp, &dest)?;
     tracing::info!("whisper model ready: {} bytes", downloaded);
     Ok(dest)

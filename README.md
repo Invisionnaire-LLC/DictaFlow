@@ -1,6 +1,6 @@
 # DictaFlow
 
-Local-first, cross-platform dictation. Hold a hotkey, speak, release. Cleaned text lands at your cursor. All processing runs on your machine. MIT licensed. By **Invisionnaire**.
+Local-first, cross-platform dictation. Hold a hotkey, speak, release. Cleaned text lands at your cursor immediately. DictaFlow learns names and terms when you fix them in place, like Wispr Flow, with no review step. All processing runs on your machine. MIT licensed. By **Invisionnaire**.
 
 ---
 
@@ -13,10 +13,11 @@ Local-first, cross-platform dictation. Hold a hotkey, speak, release. Cleaned te
 | 3: ASR | `whisper-rs` + `large-v3-turbo`, Metal on macOS | Done |
 | 4: Cleanup | Rules + Ollama (`gemma3:1b`) with 800 ms timeout + fallback | Done |
 | 5: End-to-end pipeline | Hotkey → audio → ASR → cleanup → paste | Done |
-| 6: UI polish | Tray menu, HUD, settings window, About window | Done |
-| 7: macOS bundling | Signed `.app`, LSUIElement, mic usage string, Accessibility gate | Done |
-| 8: Windows / Linux | Target-conditional whisper features (CUDA / CPU) | Scaffolded, untested |
-| 9: Release infra | GitHub Actions, notarization, DMG | Not started |
+| 6: UI polish | Tray menu, HUD, settings window, About window, History | Done |
+| 7: Vocabulary learning | Inline edit learning, dictionary replacements, Whisper prompt sync | Done |
+| 8: macOS bundling | Signed `.app`, LSUIElement, mic usage string, Accessibility gate | Done |
+| 9: Windows / Linux | Target-conditional whisper features (CUDA / CPU) | Scaffolded, untested |
+| 10: Release infra | Local release scripts, notarization, Mac App Store tooling | In progress |
 
 See [docs/COMPETITOR-GAP.md](docs/COMPETITOR-GAP.md) for a Wispr Flow feature comparison and prioritized gap list.
 
@@ -45,6 +46,7 @@ ASR (whisper-rs + ggml-large-v3-turbo, GPU accel on macOS via Metal)
 HybridCleaner
     ├── RulesCleaner  (deterministic: fillers, spoken commands,
     │                  capitalization, repeated-word collapse)
+    ├── Dictionary    (learned word replacements, case-insensitive)
     └── OllamaCleaner (local `gemma3:1b`, 800 ms timeout,
                        falls back to rules output on failure)
     │
@@ -54,7 +56,13 @@ Paster (arboard + enigo): save clipboard, write text,
     │
     ▼
 Paste at cursor
+    │
+    ▼
+Vocabulary learning (optional): if you edit the pasted text in place,
+    DictaFlow learns the correction and applies it on future dictations
 ```
+
+After paste, DictaFlow watches the focused field for a few seconds. If you fix a word (for example `Mackenzie` → `McKenzie`), it saves a replacement, shows a brief HUD toast, and syncs learned terms into Whisper's `initial_prompt` for better recognition next time.
 
 Each module is a leaf in [src-tauri/src/](src-tauri/src/). Swap any backend by replacing one file.
 
@@ -104,6 +112,13 @@ Builds are signed automatically with the identity in [src-tauri/tauri.conf.json]
 ```
 
 After the Account Holder creates a **Developer ID Application** certificate, update `signingIdentity` in `tauri.conf.json`, then re-run the script. Notarization uses the API key in `scripts/apple-release.env` (copy from `apple-release.env.example`). You still re-grant Accessibility once when the signing identity changes; Developer ID makes that grant survive rebuilds.
+
+For Mac App Store builds (separate config and entitlements):
+
+```bash
+./scripts/setup-appstore-signing.sh   # one-time cert setup
+./scripts/release-macos-appstore.sh
+```
 
 ### Windows
 
@@ -158,15 +173,29 @@ Without Ollama, DictaFlow silently falls back to rules-only cleanup. The app nev
 
 ---
 
+## Custom vocabulary
+
+DictaFlow learns locally from your corrections. There is no CSV import and no review window before paste.
+
+| How you teach it | What happens |
+|---|---|
+| Fix pasted text in the app where it landed | Background watch detects the edit and learns word-level replacements |
+| **History…** → edit cleaned text → **Save and learn** | Same learning path, useful if you notice a mistake later |
+
+Learned replacements are stored in `dictionary.json`, applied during cleanup, and merged into `vocabulary.txt` for Whisper. The HUD briefly shows `Learned: old → new` when a correction is picked up.
+
+---
+
 ## Daily use
 
 1. Click into any text field (Notes, Slack, browser, terminal, anywhere).
 2. Hold your hotkey (default **F9**, change in Settings), speak, release.
-3. Cleaned text appears at your cursor.
+3. Cleaned text appears at your cursor. Fix any word in place if needed; DictaFlow remembers it for next time.
 
 The tray icon (frog in your menu bar / system tray) is the home for the app. Right-click it for the menu:
 
 - **About DictaFlow**: version info
+- **History…**: search past dictations, edit cleaned text, save corrections
 - **Settings…**: change hotkey, select microphone, reposition the HUD
 - **Quit**
 
@@ -185,6 +214,9 @@ The floating HUD pill shows state:
 |---|---|---|
 | Whisper model | `~/Library/Application Support/DictaFlow/models/` | `%LOCALAPPDATA%\DictaFlow\models\` |
 | Settings (hotkey, mic, HUD position) | `~/Library/Application Support/DictaFlow/settings.json` | `%APPDATA%\DictaFlow\settings.json` |
+| Learned dictionary | `~/Library/Application Support/DictaFlow/dictionary.json` | `%LOCALAPPDATA%\DictaFlow\dictionary.json` |
+| Whisper vocabulary prompt | `~/Library/Application Support/DictaFlow/vocabulary.txt` | `%LOCALAPPDATA%\DictaFlow\vocabulary.txt` |
+| Dictation history | `~/Library/Application Support/DictaFlow/history.json` | `%LOCALAPPDATA%\DictaFlow\history.json` |
 | Recording debug artifacts | `~/Library/Application Support/DictaFlow/recordings/` | `%LOCALAPPDATA%\DictaFlow\recordings\` |
 | Logs | `~/Library/Logs/DictaFlow/app.log` | `%LOCALAPPDATA%\DictaFlow\Logs\app.log` |
 
@@ -201,7 +233,7 @@ cargo tauri build      # produce signed .app + DMG (macOS)
 cargo test --bins      # unit tests for pure DSP and cleaner logic
 ```
 
-Unit tests cover the pure DSP and cleaner logic in [audio.rs](src-tauri/src/audio.rs), [cleanup/rules.rs](src-tauri/src/cleanup/rules.rs), and [cleanup/ollama.rs](src-tauri/src/cleanup/ollama.rs).
+Unit tests cover DSP, cleanup, dictionary learning, paste verification, and history in [audio.rs](src-tauri/src/audio.rs), [cleanup/rules.rs](src-tauri/src/cleanup/rules.rs), [cleanup/ollama.rs](src-tauri/src/cleanup/ollama.rs), [dictionary.rs](src-tauri/src/dictionary.rs), [paste.rs](src-tauri/src/paste.rs), and [history.rs](src-tauri/src/history.rs).
 
 ---
 
@@ -210,12 +242,18 @@ Unit tests cover the pure DSP and cleaner logic in [audio.rs](src-tauri/src/audi
 ```
 DictaFlow/
 ├── dist/
-│   ├── hud.html              # floating HUD pill (RMS-driven bars)
+│   ├── hud.html              # floating HUD pill (RMS-driven bars, learn toasts)
+│   ├── history.html          # searchable dictation history + Save and learn
 │   ├── settings.html         # settings window
 │   └── about.html            # About window
+├── scripts/
+│   ├── release-macos.sh              # Developer ID / notarized release
+│   ├── release-macos-appstore.sh     # Mac App Store build + upload
+│   └── populate-appstore-listing.py  # App Store Connect metadata
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json       # Tauri config: bundle targets, macOS signing
+│   ├── tauri.appstore.conf.json
 │   ├── Info.plist            # LSUIElement + NSMicrophoneUsageDescription
 │   ├── build.rs
 │   ├── capabilities/         # Tauri 2 capability manifests
@@ -224,13 +262,15 @@ DictaFlow/
 │       ├── main.rs           # Tauri bootstrap + pipeline orchestration
 │       ├── state.rs          # idle / recording / processing / error
 │       ├── settings.rs       # settings load/save
+│       ├── history.rs        # dictation history persistence
+│       ├── dictionary.rs     # learned replacements + Whisper vocab sync
 │       ├── audio.rs          # cpal capture + DSP
 │       ├── asr.rs            # whisper-rs Transcriber
 │       ├── cleanup/
 │       │   ├── mod.rs        # HybridCleaner
 │       │   ├── rules.rs      # deterministic rules
 │       │   └── ollama.rs     # local LLM via HTTP
-│       └── paste.rs          # clipboard + synthesized paste
+│       └── paste.rs          # clipboard + synthesized paste + edit learning
 ```
 
 ---

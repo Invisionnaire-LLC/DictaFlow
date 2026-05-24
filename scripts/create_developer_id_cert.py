@@ -63,9 +63,7 @@ def ensure_csr() -> str:
                 "req",
                 "-new",
                 "-newkey",
-                "ec",
-                "-pkeyopt",
-                "ec_paramgen_curve:prime256v1",
+                "rsa:2048",
                 "-nodes",
                 "-keyout",
                 str(KEY_FILE),
@@ -104,6 +102,12 @@ def main() -> None:
         result = api_post("/certificates", token, body)
     except urllib.error.HTTPError as e:
         detail = e.read().decode()
+        if e.code == 403:
+            raise SystemExit(
+                "create certificate failed (403): Account Holder must create this cert.\n"
+                f"Run ./scripts/setup-developer-id.sh and upload the CSR at developer.apple.com\n"
+                f"Details: {detail}"
+            ) from e
         raise SystemExit(f"create certificate failed ({e.code}): {detail}") from e
 
     attrs = result["data"]["attributes"]

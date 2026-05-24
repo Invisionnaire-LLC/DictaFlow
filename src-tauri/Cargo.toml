@@ -40,6 +40,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 cocoa = "0.26"
 objc = "0.2"
 core-foundation = "0.10"
+core-graphics = { version = "0.24", features = ["elcapitan"] }
 whisper-rs = { version = "0.16", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

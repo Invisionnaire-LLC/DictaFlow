@@ -11,7 +11,7 @@
     "windows": [],
     "macOSPrivateApi": true,
     "security": {
-      "csp": null
+      "csp": "default-src 'self' tauri: asset: https://asset.localhost ipc: http://ipc.localhost; script-src 'self' 'unsafe-inline' tauri:; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; connect-src 'self' tauri: ipc: http://ipc.localhost https://asset.localhost"
     }
   },
   "bundle": {
@@ -21,6 +21,7 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
     ],
     "category": "Utility",

@@ -1,23 +1,35 @@
 use once_cell::sync::Lazy;
 use regex::{Regex, RegexBuilder};
 
-const SPOKEN_COMMANDS: &[(&str, &str)] = &[
+const SAFE_SPOKEN_COMMANDS: &[(&str, &str)] = &[
     ("new paragraph", "\n\n"),
     ("new line", "\n"),
     ("full stop", ". "),
-    ("period", ". "),
-    ("comma", ", "),
     ("question mark", "? "),
     ("exclamation point", "! "),
     ("exclamation mark", "! "),
-    ("semicolon", "; "),
+];
+
+/// Single-word punctuation aliases that collide with normal speech (e.g. "Cretaceous period").
+const AMBIGUOUS_SPOKEN: &[(&str, &str)] = &[
+    ("period", ". "),
+    ("comma", ", "),
     ("colon", ": "),
+    ("semicolon", "; "),
+];
+
+/// Words that often start a new clause after a spoken punctuation command.
+const CLAUSE_START_WORDS: &[&str] = &[
+    "how", "what", "when", "where", "why", "who", "which", "and", "but", "or", "so", "then",
+    "also", "plus", "i", "we", "you", "they", "he", "she", "it", "can", "could", "would", "will",
+    "should", "please", "is", "are", "was", "were", "do", "does", "did", "have", "has", "had",
+    "am", "let", "now", "well", "okay", "ok",
 ];
 
 const FILLERS: &[&str] = &["um", "umm", "uh", "uhh", "erm", "ah", "ahh", "mhm", "hmm"];
 
 static SPOKEN_COMMAND_REGEXES: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
-    SPOKEN_COMMANDS
+    SAFE_SPOKEN_COMMANDS
         .iter()
         .map(|(kw, rep)| {
             let pattern = format!(r"\s*\b{}\b\s*", regex::escape(kw));
@@ -29,6 +41,17 @@ static SPOKEN_COMMAND_REGEXES: Lazy<Vec<(Regex, &'static str)>> = Lazy::new(|| {
         })
         .collect()
 });
+
+static AMBIGUOUS_LOOKUP: Lazy<std::collections::HashMap<&'static str, &'static str>> =
+    Lazy::new(|| {
+        AMBIGUOUS_SPOKEN
+            .iter()
+            .copied()
+            .collect::<std::collections::HashMap<_, _>>()
+    });
+
+static CLAUSE_START_SET: Lazy<std::collections::HashSet<&'static str>> =
+    Lazy::new(|| CLAUSE_START_WORDS.iter().copied().collect());
 
 static FILLER_REGEX: Lazy<Regex> = Lazy::new(|| {
     let alternation = FILLERS
@@ -64,11 +87,39 @@ pub fn apply(input: &str) -> String {
 }
 
 pub fn replace_spoken_commands(text: &str) -> String {
-    let mut result = text.to_string();
+    let mut result = replace_ambiguous_spoken(text);
     for (re, rep) in SPOKEN_COMMAND_REGEXES.iter() {
         result = re.replace_all(&result, *rep).into_owned();
     }
     result
+}
+
+fn replace_ambiguous_spoken(text: &str) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return text.to_string();
+    }
+
+    let mut out = Vec::with_capacity(words.len());
+    for (index, word) in words.iter().enumerate() {
+        let bare = word.trim_matches(|c: char| !c.is_alphanumeric());
+        let lower = bare.to_ascii_lowercase();
+        if let Some(rep) = AMBIGUOUS_LOOKUP.get(lower.as_str()) {
+            let at_end = index + 1 == words.len();
+            let next_starter = words.get(index + 1).is_some_and(|next| {
+                let bare_next = next
+                    .trim_matches(|c: char| !c.is_alphanumeric())
+                    .to_ascii_lowercase();
+                CLAUSE_START_SET.contains(bare_next.as_str())
+            });
+            if at_end || next_starter {
+                out.push(*rep);
+                continue;
+            }
+        }
+        out.push(*word);
+    }
+    out.join(" ")
 }
 
 pub fn remove_fillers(text: &str) -> String {
@@ -134,7 +185,7 @@ mod tests {
 
     #[test]
     fn spoken_period() {
-        assert_eq!(apply("hello period how are you"), "Hello. How are you.");
+        assert_eq!(apply("hello full stop how are you"), "Hello. How are you.");
     }
 
     #[test]
@@ -187,5 +238,23 @@ mod tests {
             apply("first line new paragraph second line"),
             "First line\n\nSecond line."
         );
+    }
+
+    #[test]
+    fn period_in_noun_phrase_not_replaced() {
+        assert_eq!(
+            apply("the Cretaceous period ended abruptly"),
+            "The Cretaceous period ended abruptly."
+        );
+    }
+
+    #[test]
+    fn period_as_command_before_new_clause() {
+        assert_eq!(apply("hello period how are you"), "Hello. How are you.");
+    }
+
+    #[test]
+    fn period_as_command_at_end() {
+        assert_eq!(apply("that is all period"), "That is all.");
     }
 }

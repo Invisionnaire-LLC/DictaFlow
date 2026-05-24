@@ -49,8 +49,9 @@
       <img src="invisionnaire.png" alt="Invisionnaire" />
       <h1>DictaFlow</h1>
     </div>
-    <div class="sub">0.1.0 · by Invisionnaire</div>
+    <div class="sub"><span id="versionLine">0.1.0</span> · by Invisionnaire</div>
     <dl>
+      <dt>Build</dt><dd id="buildHash">…</dd>
       <dt>Transcription</dt><dd>whisper-rs · large-v3-turbo</dd>
       <dt>Cleanup</dt><dd>Rules + Ollama · <span id="ollamaModel">gemma3:1b</span></dd>
       <dt>Hotkey</dt><dd>Hold F9 to dictate</dd>
@@ -62,14 +63,24 @@
     </div>
   </div>
   <script>
-    const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
-    if (invoke) {
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        if (window.__TAURI__?.core?.invoke) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const invoke = window.__TAURI__?.core?.invoke;
+      if (!invoke) return;
+      try {
+        const info = await invoke("get_build_info");
+        document.getElementById("versionLine").textContent = info.version;
+        document.getElementById("buildHash").textContent = info.git_hash;
+      } catch (_) {}
       invoke("get_ollama_model")
         .then((model) => {
           document.getElementById("ollamaModel").textContent = model;
         })
         .catch(() => {});
-    }
+    })();
   </script>
 </body>
 </html>

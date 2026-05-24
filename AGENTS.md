@@ -214,11 +214,20 @@ el grant no valida aunque la UI lo muestre encendido. Re-firmar con
 identidad coherente y el grant pega. La build "rota" histórica (`.broken-…`) en realidad
 tenía la firma bien; "se rompió" solo por el cambio de cdhash + dos copias corriendo a la vez.
 
-### Arreglo de fondo (futuro)
-La fragilidad solo desaparece con **firma estable real**: un certificado **Developer ID**.
-Con Developer ID el requirement de TCC se vuelve `identifier "..." and anchor apple generic ...`
-en vez de `cdhash H"..."`, así que el grant **sobrevive a rebuilds**. Mientras siga siendo
-ad-hoc, cada rebuild rompe Accessibility y hay que repetir el fix de arriba.
+### Arreglo de fondo (Developer ID)
+
+La fragilidad desaparece con **Developer ID Application** + install que no pisa la firma:
+
+```bash
+./scripts/setup-developer-id.sh          # CSR + instrucciones (Account Holder, una vez)
+./scripts/import-developer-id-cert.sh ~/Downloads/developerID_application.cer
+./scripts/setup-notary-credentials.sh    # opcional, para notarización
+./scripts/install-macos.sh               # firma con Developer ID, ya no re-firma ad-hoc
+```
+
+Con Developer ID, TCC usa `identifier "com.invisionnaire.dictaflow" and anchor apple generic ...`
+y el grant **sobrevive rebuilds**. Sin Developer ID, `install-macos.sh` usa Apple Development
+o ad-hoc y avisa que Accessibility puede resetearse en cada rebuild.
 
 ---
 

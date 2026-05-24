@@ -7,7 +7,9 @@ mod cleanup;
 mod cloud_asr;
 mod dictionary;
 mod history;
+mod hud_cursor;
 mod login_item;
+mod main_thread;
 mod paste;
 mod settings;
 mod state;
@@ -60,6 +62,7 @@ struct HudPlacedMark {
 
 static HUD_LAST_PLACED: Mutex<Option<HudPlacedMark>> = Mutex::new(None);
 static HUD_SAVE_GEN: AtomicU64 = AtomicU64::new(0);
+static SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
 pub struct AppContext {
     pub audio: AudioController,
@@ -77,6 +80,8 @@ pub struct AppContext {
     ignore_hotkey_release: Mutex<bool>,
     /// App that was frontmost when dictation started (where paste should land).
     paste_target_pid: Mutex<Option<i32>>,
+    /// Stops the cursor-follow HUD polling thread.
+    hud_follow_cancel: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 fn parse_modifiers(mods: &[String]) -> Result<Option<Modifiers>, String> {
@@ -112,6 +117,21 @@ static TRAY_ICON_DECODED: once_cell::sync::Lazy<(Vec<u8>, u32, u32)> =
         (rgba.into_raw(), w, h)
     });
 
+static HUD_STYLE_CACHE: once_cell::sync::Lazy<Mutex<String>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(load_hud_style_from_disk()));
+
+fn load_hud_style_from_disk() -> String {
+    hud_cursor::normalize_hud_style(
+        &settings::Settings::load()
+            .hud_style
+            .unwrap_or_else(|| "notch".to_string()),
+    )
+}
+
+fn set_hud_style_cache(style: &str) {
+    *HUD_STYLE_CACHE.lock() = hud_cursor::normalize_hud_style(style);
+}
+
 fn tray_icon_image() -> Image<'static> {
     let (pixels, w, h) = &*TRAY_ICON_DECODED;
     Image::new_owned(pixels.clone(), *w, *h)
@@ -122,6 +142,12 @@ fn set_state(app: &AppHandle, new_state: AppState) {
         *ctx.state.lock() = new_state;
     }
     let _ = app.emit("state", new_state.as_str());
+    if hud_cursor::is_cursor_style(&hud_style()) {
+        match new_state {
+            AppState::Recording => hud_cursor::on_recording_start(app),
+            _ => hud_cursor::on_recording_end(app),
+        }
+    }
     set_hud_elevated(app, hud_should_elevate(new_state));
     tracing::debug!("state -> {:?}", new_state);
 }
@@ -240,7 +266,9 @@ fn main() {
             check_accessibility,
             prompt_accessibility,
             open_accessibility_settings,
-            open_microphone_settings
+            open_microphone_settings,
+            get_build_info,
+            get_cursor_hud_status
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -272,6 +300,9 @@ fn main() {
                 tracing::info!("settings: using input device '{}'", d);
             }
             tracing::info!("settings: using ollama model '{}'", ollama_model);
+            if let Err(e) = login_item::reconcile(saved.launch_at_login) {
+                tracing::warn!("launch at login reconcile: {:?}", e);
+            }
 
             let hotkey = saved.hotkey.clone().unwrap_or_default();
             let shortcut = match hotkey_to_shortcut(&hotkey) {
@@ -294,6 +325,7 @@ fn main() {
                 hotkey_press_at: Mutex::new(None),
                 ignore_hotkey_release: Mutex::new(false),
                 paste_target_pid: Mutex::new(None),
+                hud_follow_cancel: Mutex::new(None),
             };
             app.manage(ctx);
 
@@ -315,9 +347,7 @@ fn main() {
         .expect("tauri build failed")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                if let Some(hud) = app.get_webview_window("hud") {
-                    save_hud_position_from_window(&hud);
-                }
+                prepare_shutdown(app);
             }
         });
 }
@@ -427,9 +457,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     if let Some(ctx) = app.try_state::<AppContext>() {
                         ctx.audio.set_device(selection.clone());
                     }
-                    let mut saved = settings::Settings::load();
-                    saved.input_device = selection.clone();
-                    if let Err(e) = saved.save() {
+                    if let Err(e) = settings::Settings::update(|saved| {
+                        saved.input_device = selection.clone();
+                    }) {
                         tracing::warn!("could not save settings: {:?}", e);
                     }
                     tracing::info!("microphone switched to: {:?}", selection);
@@ -463,7 +493,7 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
     let (width, height) = if style == "notch" {
         (HUD_EXPANDED_W, HUD_COMPACT_H)
     } else {
-        hud_size("classic")
+        hud_size(&style)
     };
 
     let window = WebviewWindowBuilder::new(app, "hud", WebviewUrl::App("hud.html".into()))
@@ -480,10 +510,13 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
 
     position_hud(&window);
     persist_legacy_hud_anchor(&window);
+    if hud_cursor::is_cursor_style(&style) {
+        hud_cursor::log_tracking_readiness(&window);
+    }
     let _ = window.emit("hud_style", style.as_str());
     let _ = window.emit("live_transcript", live_transcript_enabled());
     set_hud_elevated(app, hud_always_on_top_enabled());
-    set_hud_draggable(&window, true);
+    set_hud_draggable(app, &window, !hud_cursor::is_cursor_style(&style));
 
     let app_clone = app.clone();
     window.on_window_event(move |event| match event {
@@ -494,6 +527,9 @@ fn build_hud(app: &AppHandle) -> tauri::Result<()> {
             }
         }
         WindowEvent::Moved(_) => {
+            if hud_cursor::is_cursor_style(&hud_style()) {
+                return;
+            }
             if let Some(hud) = app_clone.get_webview_window("hud") {
                 if hud_move_should_persist(&hud) {
                     save_hud_position_from_window(&hud);
@@ -565,50 +601,38 @@ fn open_microphone_settings() {
 }
 
 fn set_hud_elevated(app: &AppHandle, elevated: bool) {
-    let app = app.clone();
-    if let Err(e) = app.clone().run_on_main_thread(move || {
-        if let Some(hud) = app.get_webview_window("hud") {
-            let _ = hud.show();
-            let _ = hud.set_always_on_top(elevated);
-            #[cfg(target_os = "macos")]
-            set_hud_window_level(&hud, elevated);
-        }
-    }) {
-        tracing::warn!("set_hud_elevated dispatch failed: {:?}", e);
-    }
-}
-
-#[cfg(target_os = "macos")]
-#[allow(deprecated, unexpected_cfgs)]
-fn set_hud_window_level(window: &tauri::WebviewWindow, elevated: bool) {
-    use cocoa::base::id;
-    use objc::{msg_send, sel, sel_impl};
-
-    let ns_window = match window.ns_window() {
-        Ok(ptr) => ptr as id,
-        Err(e) => {
-            tracing::warn!("could not access NSWindow for HUD: {:?}", e);
-            return;
-        }
-    };
-    if ns_window.is_null() {
+    if SHUTTING_DOWN.load(Ordering::Relaxed) {
         return;
     }
-    const NS_NORMAL_WINDOW_LEVEL: i64 = 0;
-    const NS_FLOATING_WINDOW_LEVEL: i64 = 3;
-    let level = if elevated {
-        NS_FLOATING_WINDOW_LEVEL
-    } else {
-        NS_NORMAL_WINDOW_LEVEL
-    };
-    unsafe {
-        let _: () = msg_send![ns_window, setLevel: level];
-    }
+    let app = app.clone();
+    let cursor_style = hud_cursor::is_cursor_style(&hud_style());
+    main_thread::run_void(app.clone(), move || {
+        if let Some(hud) = app.get_webview_window("hud") {
+            // Cursor mode visibility is owned by hud_cursor (show/hide on record).
+            // Only adjust stacking here so we never race reposition with a blind show().
+            if !cursor_style {
+                let _ = hud.show();
+            }
+            if hud.set_always_on_top(elevated).is_err() {
+                tracing::warn!("set_always_on_top({elevated}) failed");
+            }
+        }
+    });
+}
+
+fn set_hud_draggable(app: &AppHandle, window: &tauri::WebviewWindow, draggable: bool) {
+    let label = window.label().to_string();
+    let app = app.clone();
+    main_thread::run_void(app.clone(), move || {
+        if let Some(hud) = app.get_webview_window(&label) {
+            set_hud_draggable_ns(&hud, draggable);
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
 #[allow(deprecated, unexpected_cfgs)]
-fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
+fn set_hud_draggable_ns(window: &tauri::WebviewWindow, draggable: bool) {
     use cocoa::base::{id, BOOL, NO, YES};
     use objc::{msg_send, sel, sel_impl};
 
@@ -630,10 +654,10 @@ fn set_hud_draggable(window: &tauri::WebviewWindow, draggable: bool) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn set_hud_draggable(_window: &tauri::WebviewWindow, _draggable: bool) {}
+fn set_hud_draggable_ns(_window: &tauri::WebviewWindow, _draggable: bool) {}
 
 #[cfg(target_os = "macos")]
-#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked in #7
+#[allow(deprecated, unexpected_cfgs)] // cocoa::base aliases; objc2 migration tracked in #7
 fn activate_application() {
     use cocoa::base::{id, YES};
     use objc::{class, msg_send, sel, sel_impl};
@@ -645,7 +669,7 @@ fn activate_application() {
 }
 
 #[cfg(target_os = "macos")]
-#[allow(deprecated)] // cocoa::base aliases; objc2 migration tracked in #7
+#[allow(deprecated, unexpected_cfgs)] // cocoa::base aliases; objc2 migration tracked in #7
 fn order_window_front(window: &WebviewWindow) {
     use cocoa::base::{id, nil};
     use objc::{msg_send, sel, sel_impl};
@@ -733,16 +757,14 @@ fn open_auxiliary_window(
 }
 
 fn hud_style() -> String {
-    settings::Settings::load()
-        .hud_style
-        .unwrap_or_else(|| "classic".to_string())
+    HUD_STYLE_CACHE.lock().clone()
 }
 
 fn hud_size(style: &str) -> (f64, f64) {
-    if style == "notch" {
-        (HUD_EXPANDED_W, HUD_COMPACT_H)
-    } else {
-        (110.0, 40.0)
+    match style {
+        "notch" => (HUD_EXPANDED_W, HUD_COMPACT_H),
+        "classic" | "cursor" => (110.0, 40.0),
+        _ => (HUD_EXPANDED_W, HUD_COMPACT_H),
     }
 }
 
@@ -787,7 +809,7 @@ fn default_classic_hud_position(monitor: &tauri::Monitor, scale: f64) -> HudPosi
     }
 }
 
-fn mark_hud_placed_programmatically(window: &tauri::WebviewWindow) {
+pub(crate) fn mark_hud_placed_programmatically(window: &tauri::WebviewWindow) {
     let mark = window.outer_position().ok().map(|pos| HudPlacedMark {
         x: pos.x,
         y: pos.y,
@@ -885,6 +907,21 @@ fn position_hud(window: &tauri::WebviewWindow) {
     let style = settings.hud_style.as_deref().unwrap_or("classic");
     let monitor = active_monitor(window);
 
+    if hud_cursor::is_cursor_style(style) {
+        hud_cursor::position_cursor_hud(window);
+        let recording = window
+            .app_handle()
+            .try_state::<AppContext>()
+            .map(|ctx| *ctx.state.lock() == AppState::Recording)
+            .unwrap_or(false);
+        if recording {
+            let _ = window.show();
+        } else {
+            let _ = window.hide();
+        }
+        return;
+    }
+
     if style == "classic" {
         if settings.hud_anchor.is_some() {
             let _ = settings::Settings::update(|saved| {
@@ -971,7 +1008,7 @@ fn position_hud(window: &tauri::WebviewWindow) {
 }
 
 fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
-    let mut saved = settings::Settings::load();
+    let saved = settings::Settings::load();
     if saved.hud_style.as_deref().unwrap_or("classic") == "classic" {
         return;
     }
@@ -983,12 +1020,13 @@ fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
         return;
     };
     let compact_w = (HUD_COMPACT_W * scale).round() as i32;
-    saved.hud_anchor = Some(anchor);
-    saved.hud_position = Some(HudPosition {
-        x: anchor.right - compact_w,
-        y: anchor.top,
-    });
-    if let Err(e) = saved.save() {
+    if let Err(e) = settings::Settings::update(|saved| {
+        saved.hud_anchor = Some(anchor);
+        saved.hud_position = Some(HudPosition {
+            x: anchor.right - compact_w,
+            y: anchor.top,
+        });
+    }) {
         tracing::warn!("could not migrate hud anchor: {:?}", e);
     } else {
         tracing::info!(
@@ -1000,11 +1038,14 @@ fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
 }
 
 fn save_hud_position_from_window(window: &tauri::WebviewWindow) {
+    let style = hud_style();
+    if hud_cursor::is_cursor_style(&style) {
+        return;
+    }
     let Ok(outer) = window.outer_position() else {
         return;
     };
     let scale = window.scale_factor().unwrap_or(1.0);
-    let style = hud_style();
     let compact_w = (HUD_COMPACT_W * scale).round() as i32;
     let expanded_w = (HUD_EXPANDED_W * scale).round() as i32;
 
@@ -1105,22 +1146,32 @@ fn live_transcript_enabled() -> bool {
 fn expand_hud(app: &AppHandle) {
     let style = hud_style();
     let transcript = live_transcript_enabled();
-    let should_expand = style == "notch" || (style == "classic" && transcript);
+    let should_expand = style == "notch" || (hud_cursor::uses_waveform(&style) && transcript);
     if should_expand {
         emit_hud(app, "hud_layout", "expanded");
         if transcript {
             emit_hud(app, "partial", "Listening…");
         }
     }
-    if style == "classic" && transcript {
+    if hud_cursor::uses_waveform(&style) && transcript {
         let app = app.clone();
-        let height = hud_size("classic").1;
-        if let Err(e) = app.clone().run_on_main_thread(move || {
-            if let Some(hud) = app.get_webview_window("hud") {
-                let _ = hud.set_size(LogicalSize::new(HUD_EXPANDED_W, height));
+        if hud_cursor::is_cursor_style(&style) {
+            if let Err(e) = app.clone().run_on_main_thread(move || {
+                if let Some(hud) = app.get_webview_window("hud") {
+                    hud_cursor::set_cursor_hud_size(&hud, true);
+                }
+            }) {
+                tracing::warn!("expand_hud cursor resize failed: {:?}", e);
             }
-        }) {
-            tracing::warn!("expand_hud resize dispatch failed: {:?}", e);
+        } else {
+            let height = hud_size("classic").1;
+            if let Err(e) = app.clone().run_on_main_thread(move || {
+                if let Some(hud) = app.get_webview_window("hud") {
+                    let _ = hud.set_size(LogicalSize::new(HUD_EXPANDED_W, height));
+                }
+            }) {
+                tracing::warn!("expand_hud resize dispatch failed: {:?}", e);
+            }
         }
     }
 }
@@ -1129,18 +1180,28 @@ fn compact_hud(app: &AppHandle) {
     emit_hud(app, "partial", "");
     let style = hud_style();
     let transcript = live_transcript_enabled();
-    if style == "notch" || (style == "classic" && transcript) {
+    if style == "notch" || (hud_cursor::uses_waveform(&style) && transcript) {
         emit_hud(app, "hud_layout", "compact");
     }
-    if style == "classic" {
+    if hud_cursor::uses_waveform(&style) {
         let app = app.clone();
-        let (w, h) = hud_size("classic");
-        if let Err(e) = app.clone().run_on_main_thread(move || {
-            if let Some(hud) = app.get_webview_window("hud") {
-                let _ = hud.set_size(LogicalSize::new(w, h));
+        if hud_cursor::is_cursor_style(&style) {
+            if let Err(e) = app.clone().run_on_main_thread(move || {
+                if let Some(hud) = app.get_webview_window("hud") {
+                    hud_cursor::set_cursor_hud_size(&hud, false);
+                }
+            }) {
+                tracing::warn!("compact_hud cursor resize failed: {:?}", e);
             }
-        }) {
-            tracing::warn!("compact_hud resize dispatch failed: {:?}", e);
+        } else {
+            let (w, h) = hud_size("classic");
+            if let Err(e) = app.clone().run_on_main_thread(move || {
+                if let Some(hud) = app.get_webview_window("hud") {
+                    let _ = hud.set_size(LogicalSize::new(w, h));
+                }
+            }) {
+                tracing::warn!("compact_hud resize dispatch failed: {:?}", e);
+            }
         }
     }
 }
@@ -1174,8 +1235,8 @@ fn show_settings(app: AppHandle) -> tauri::Result<()> {
         "settings",
         "settings.html",
         "DictaFlow Settings",
-        520.0,
-        880.0,
+        580.0,
+        640.0,
     )
 }
 
@@ -1225,19 +1286,29 @@ fn update_history_entry(
         .ok_or_else(|| "history entry not found".to_string())?;
     let learned = dictionary::learn_from_edit(&before, &cleaned).map_err(|e| e.to_string())?;
     for update in &learned {
-        let _ = app.emit("word_learned", update);
+        emit_word_learned(&app, update);
     }
     Ok(learned)
 }
 
-#[tauri::command]
-fn list_dictionary() -> Result<Vec<dictionary::Replacement>, String> {
-    Ok(dictionary::list_replacements())
+fn emit_word_learned(app: &AppHandle, update: &LearnedUpdate) {
+    hud_cursor::notify_word_learned(app, update);
 }
 
 #[tauri::command]
-fn delete_dictionary_entry(from: String) -> Result<bool, String> {
-    dictionary::delete_replacement(&from).map_err(|e| e.to_string())
+async fn list_dictionary() -> Result<Vec<dictionary::Replacement>, String> {
+    tauri::async_runtime::spawn_blocking(dictionary::list_replacements)
+        .await
+        .map_err(|e| format!("list task failed: {e}"))
+}
+
+#[tauri::command]
+async fn delete_dictionary_entry(from: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        dictionary::delete_replacement(&from).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("delete task failed: {e}"))?
 }
 
 #[tauri::command]
@@ -1287,9 +1358,9 @@ fn set_hotkey(app: AppHandle, hotkey: Hotkey) -> Result<Hotkey, String> {
     *ctx.current_shortcut.lock() = new_shortcut;
     *ctx.current_hotkey.lock() = hotkey.clone();
 
-    let mut saved = settings::Settings::load();
-    saved.hotkey = Some(hotkey.clone());
-    if let Err(e) = saved.save() {
+    if let Err(e) = settings::Settings::update(|saved| {
+        saved.hotkey = Some(hotkey.clone());
+    }) {
         tracing::warn!("could not persist hotkey: {:?}", e);
     }
 
@@ -1338,14 +1409,28 @@ fn set_ollama_model(app: AppHandle, model: String) -> Result<String, String> {
     let selected = trimmed.to_string();
     ctx.cleaner.set_ollama_model(selected.clone());
 
-    let mut saved = settings::Settings::load();
-    saved.ollama_model = Some(selected.clone());
-    if let Err(e) = saved.save() {
+    if let Err(e) = settings::Settings::update(|saved| {
+        saved.ollama_model = Some(selected.clone());
+    }) {
         tracing::warn!("could not persist ollama model: {:?}", e);
     }
 
     tracing::info!("ollama model changed to: {}", selected);
     Ok(selected)
+}
+
+#[derive(serde::Serialize)]
+struct BuildInfo {
+    version: &'static str,
+    git_hash: &'static str,
+}
+
+#[tauri::command]
+fn get_build_info() -> BuildInfo {
+    BuildInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        git_hash: env!("DICTAFLOW_GIT_HASH"),
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -1485,6 +1570,11 @@ fn set_vocabulary(words: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn get_cursor_hud_status() -> String {
+    hud_cursor::tracking_status().to_string()
+}
+
+#[tauri::command]
 fn get_launch_at_login() -> bool {
     login_item::is_enabled()
 }
@@ -1493,9 +1583,9 @@ fn get_launch_at_login() -> bool {
 fn set_launch_at_login(enabled: bool) -> Result<bool, String> {
     login_item::set_enabled(enabled).map_err(|e| format!("could not update login item: {}", e))?;
 
-    let mut saved = settings::Settings::load();
-    saved.launch_at_login = enabled;
-    if let Err(e) = saved.save() {
+    if let Err(e) = settings::Settings::update(|saved| {
+        saved.launch_at_login = enabled;
+    }) {
         tracing::warn!("could not persist launch at login: {:?}", e);
     }
 
@@ -1518,18 +1608,28 @@ fn get_hud_style() -> String {
 
 #[tauri::command]
 fn set_hud_style(app: AppHandle, style: String) -> Result<String, String> {
-    let style = if style == "classic" {
-        "classic".to_string()
-    } else {
-        "notch".to_string()
-    };
+    let style = hud_cursor::normalize_hud_style(&style);
+    set_hud_style_cache(&style);
     settings::Settings::update(|saved| {
         saved.hud_style = Some(style.clone());
     })
     .map_err(|e| format!("save: {}", e))?;
+    hud_cursor::stop_follow(&app);
     if let Some(hud) = app.get_webview_window("hud") {
         position_hud(&hud);
+        set_hud_draggable(&app, &hud, !hud_cursor::is_cursor_style(&style));
         let _ = hud.emit("hud_style", &style);
+    }
+    let state = app
+        .try_state::<AppContext>()
+        .map(|ctx| *ctx.state.lock())
+        .unwrap_or(AppState::Idle);
+    if hud_cursor::is_cursor_style(&style) {
+        if state == AppState::Recording {
+            hud_cursor::on_recording_start(&app);
+        } else {
+            hud_cursor::on_recording_end(&app);
+        }
     }
     Ok(style)
 }
@@ -1995,6 +2095,14 @@ fn cancel_partial_worker(app: &AppHandle) {
             cancel.store(true, Ordering::Relaxed);
         }
     }
+}
+
+fn prepare_shutdown(app: &AppHandle) {
+    SHUTTING_DOWN.store(true, Ordering::SeqCst);
+    hud_cursor::stop_follow(app);
+    cancel_partial_worker(app);
+    // Brief pause so follow/partial threads observe the cancel flag before teardown.
+    thread::sleep(Duration::from_millis(100));
 }
 
 fn stop_partial_transcription(app: &AppHandle) {

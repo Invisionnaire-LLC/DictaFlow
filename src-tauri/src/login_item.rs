@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 const LABEL: &str = "com.invisionnaire.dictaflow.login";
 
 pub fn is_enabled() -> bool {
-    launch_agent_path().is_some_and(|path| path.exists())
+    launch_agent_path().is_some_and(|path| path.exists() && plist_points_to_current_app(&path))
 }
 
 pub fn set_enabled(enabled: bool) -> Result<()> {
@@ -13,6 +13,25 @@ pub fn set_enabled(enabled: bool) -> Result<()> {
         enable()
     } else {
         disable()
+    }
+}
+
+/// Align the LaunchAgent with persisted settings and the current app location.
+pub fn reconcile(settings_enabled: bool) -> Result<()> {
+    let path = launch_agent_path().ok_or_else(|| anyhow!("no LaunchAgents directory"))?;
+    let plist_exists = path.exists();
+    let plist_valid = plist_exists && plist_points_to_current_app(&path);
+
+    match (settings_enabled, plist_valid) {
+        (true, false) => {
+            tracing::info!("launch at login: repairing LaunchAgent");
+            enable()
+        }
+        (false, true) => {
+            tracing::info!("launch at login: removing stale LaunchAgent");
+            disable()
+        }
+        _ => Ok(()),
     }
 }
 
@@ -56,6 +75,16 @@ fn app_bundle_path(path: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
+fn plist_points_to_current_app(path: &Path) -> bool {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(expected) = program_arguments() else {
+        return false;
+    };
+    expected.iter().all(|arg| raw.contains(arg))
+}
+
 fn plist(args: &[String]) -> String {
     let args_xml = args
         .iter()
@@ -89,4 +118,14 @@ fn xml_escape(input: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xml_escape_escapes_special_chars() {
+        assert_eq!(xml_escape("a&b<c>"), "a&amp;b&lt;c&gt;");
+    }
 }

@@ -31,4 +31,6 @@ build.bat
 # Apple release secrets (copy from scripts/apple-release.env.example)
 scripts/apple-release.env
 scripts/.signing/
+scripts/.venv/
+src-tauri/.tauri-signing.local.json
 .venv-asc/

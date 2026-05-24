@@ -94,6 +94,20 @@ struct ActiveStream {
     buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     channels: u16,
+    max_samples: usize,
+}
+
+fn max_capture_samples(sample_rate: u32, channels: u16) -> usize {
+    (sample_rate as usize) * (channels as usize) * MAX_DURATION_SECS as usize
+}
+
+fn append_samples(buffer: &Mutex<Vec<f32>>, data: &[f32], max_samples: usize) {
+    let mut guard = buffer.lock();
+    guard.extend_from_slice(data);
+    if guard.len() > max_samples {
+        let overflow = guard.len() - max_samples;
+        guard.drain(0..overflow);
+    }
 }
 
 fn run(rx: mpsc::Receiver<AudioCmd>, level_tx: mpsc::Sender<f32>) {
@@ -158,8 +172,9 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
         sample_format
     );
 
+    let max_samples = max_capture_samples(sample_rate, channels);
     let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(
-        sample_rate as usize * 10,
+        sample_rate as usize * channels as usize,
     )));
     let err_fn = |err| tracing::error!("audio stream error: {}", err);
     let stream_config = config.config();
@@ -173,7 +188,7 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
                 &stream_config,
                 move |data: &[f32], _| {
                     let _ = ltx.send(rms(data));
-                    buf.lock().extend_from_slice(data);
+                    append_samples(&buf, data, max_samples);
                 },
                 err_fn,
                 None,
@@ -185,10 +200,10 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
             device.build_input_stream(
                 &stream_config,
                 move |data: &[i16], _| {
-                    let mut guard = buf.lock();
-                    let before = guard.len();
-                    guard.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
-                    let _ = ltx.send(rms(&guard[before..]));
+                    let converted: Vec<f32> =
+                        data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();
+                    let _ = ltx.send(rms(&converted));
+                    append_samples(&buf, &converted, max_samples);
                 },
                 err_fn,
                 None,
@@ -200,13 +215,12 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
             device.build_input_stream(
                 &stream_config,
                 move |data: &[u16], _| {
-                    let mut guard = buf.lock();
-                    let before = guard.len();
-                    guard
-                        .extend(data.iter().map(|&s| {
-                            (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0)
-                        }));
-                    let _ = ltx.send(rms(&guard[before..]));
+                    let converted: Vec<f32> = data
+                        .iter()
+                        .map(|&s| (s as f32 - u16::MAX as f32 / 2.0) / (u16::MAX as f32 / 2.0))
+                        .collect();
+                    let _ = ltx.send(rms(&converted));
+                    append_samples(&buf, &converted, max_samples);
                 },
                 err_fn,
                 None,
@@ -223,6 +237,7 @@ fn build_stream(level_tx: mpsc::Sender<f32>, device_name: Option<&str>) -> Resul
         buffer,
         sample_rate,
         channels,
+        max_samples,
     })
 }
 
@@ -274,10 +289,17 @@ fn finalize(active: ActiveStream) -> Result<PcmBuffer> {
 
 /// Non-destructive read of the in-progress recording buffer for live previews.
 fn snapshot_buffer(active: &ActiveStream) -> Result<PcmBuffer> {
-    let samples = active.buffer.lock().clone();
-    if samples.is_empty() {
-        return Err(anyhow!("no audio captured yet"));
-    }
+    let samples = {
+        let guard = active.buffer.lock();
+        if guard.is_empty() {
+            return Err(anyhow!("no audio captured yet"));
+        }
+        if guard.len() > active.max_samples {
+            guard[guard.len() - active.max_samples..].to_vec()
+        } else {
+            guard.clone()
+        }
+    };
 
     let mono = downmix_mono(&samples, active.channels);
     let resampled = if active.sample_rate == TARGET_SAMPLE_RATE {

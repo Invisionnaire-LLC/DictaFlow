@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
-use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 #[cfg(target_os = "macos")]
 pub fn read_focused_field_text(target_pid: Option<i32>) -> Option<String> {
@@ -69,11 +68,16 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let before = macos::read_focused_text(target_pid);
+        macos::ensure_target_active(target_pid);
 
-        // Only use AX when we can confirm text landed (Cursor, Notes, etc.).
-        // Never stop on Unverified. That broke Electron apps like Telegram.
-        if macos::try_ax_insert_text(text, target_pid)
+        let before = macos::read_focused_text(target_pid);
+        let field_unreadable = before.is_none();
+
+        // Only use AX insert when the field is readable (Cursor, Notes, etc.).
+        // Electron apps (Telegram, Slack) often report AX success without inserting,
+        // which blocks the clipboard fallback. Never stop on Unverified for those.
+        if !field_unreadable
+            && macos::try_ax_insert_text(text, target_pid)
             && macos::measure_paste_outcome(text, before.as_deref(), target_pid)
                 == PasteOutcome::Confirmed
         {
@@ -87,23 +91,25 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
             .set_text(text.to_string())
             .context("clipboard write")?;
 
-        // Original path that worked in Telegram/Outlook before the paste rework.
         thread::sleep(Duration::from_millis(30));
-        synth_paste_enigo().context("synth paste")?;
-        thread::sleep(Duration::from_millis(200));
+        macos::synth_paste_cgevent(target_pid).context("synth paste")?;
+        thread::sleep(Duration::from_millis(250));
 
-        if let Some(prev) = &previous {
-            let _ = clipboard.set_text(prev.clone());
-        }
-
-        let outcome = macos::measure_paste_outcome(text, before.as_deref(), target_pid);
-        if outcome == PasteOutcome::Failed {
-            tracing::debug!("clipboard paste did not stick; trying direct typing");
+        let mut outcome = macos::measure_paste_outcome(text, before.as_deref(), target_pid);
+        if outcome == PasteOutcome::Failed
+            || (outcome == PasteOutcome::Unverified
+                && field_unreadable
+                && macos::is_browser_pid(target_pid))
+        {
+            tracing::debug!("clipboard paste unconfirmed in browser; trying direct typing");
             macos::type_text_directly(text).context("direct typing")?;
-            tracing::info!("paste via direct typing ({})", text.len());
+            outcome = macos::measure_paste_outcome(text, before.as_deref(), target_pid);
+            tracing::info!("paste via direct typing ({}, {:?})", text.len(), outcome);
         } else {
             tracing::info!("paste via clipboard+cmd+v ({}, {:?})", text.len(), outcome);
         }
+
+        restore_clipboard_unless_confirmed(&mut clipboard, previous.as_deref(), outcome);
 
         Ok(())
     }
@@ -119,14 +125,42 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
         thread::sleep(Duration::from_millis(30));
         synth_paste_enigo().context("synth paste")?;
         thread::sleep(Duration::from_millis(50));
-        if let Some(prev) = previous {
-            let _ = clipboard.set_text(prev);
-        }
+        // No reliable field verification off macOS — leave transcript on clipboard.
+        restore_clipboard_unless_confirmed(
+            &mut clipboard,
+            previous.as_deref(),
+            PasteOutcome::Unverified,
+        );
         Ok(())
     }
 }
 
+fn restore_clipboard_unless_confirmed(
+    clipboard: &mut Clipboard,
+    previous: Option<&str>,
+    outcome: PasteOutcome,
+) {
+    if should_restore_previous_clipboard(outcome) {
+        if let Some(prev) = previous {
+            let _ = clipboard.set_text(prev.to_string());
+        }
+        return;
+    }
+
+    tracing::info!(
+        "paste {:?}; transcript left on clipboard for manual paste",
+        outcome
+    );
+}
+
+fn should_restore_previous_clipboard(outcome: PasteOutcome) -> bool {
+    outcome == PasteOutcome::Confirmed
+}
+
+#[cfg(not(target_os = "macos"))]
 fn synth_paste_enigo() -> Result<()> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
     let mut enigo = Enigo::new(&Settings::default()).context("enigo init")?;
 
     #[cfg(target_os = "macos")]
@@ -153,6 +187,8 @@ pub fn press_enter(app: &AppHandle) -> Result<()> {
 }
 
 fn press_enter_sync() -> Result<()> {
+    use enigo::{Direction, Enigo, Key, Keyboard, Settings};
+
     let mut enigo = Enigo::new(&Settings::default()).context("enigo init")?;
     enigo.key(Key::Return, Direction::Click)?;
     Ok(())
@@ -200,11 +236,20 @@ pub fn try_learn_from_field_edit(
         return Ok(Vec::new());
     }
 
-    if after.contains(pasted) {
+    let before = before.map(str::trim).unwrap_or("");
+    let post_paste = synthetic_after_paste(before, pasted);
+    if post_paste.trim() == after {
         return Ok(Vec::new());
     }
 
-    if let Some(before) = before.map(str::trim).filter(|s| !s.is_empty()) {
+    if tokenize_words(&post_paste).len() == tokenize_words(after).len() {
+        let learned = crate::dictionary::learn_from_edit(&post_paste, after)?;
+        if !learned.is_empty() {
+            return Ok(learned);
+        }
+    }
+
+    if !before.is_empty() {
         if let Some(rest) = after.strip_prefix(before) {
             let suffix = rest.trim();
             if !suffix.is_empty() && suffix != pasted {
@@ -213,7 +258,45 @@ pub fn try_learn_from_field_edit(
         }
     }
 
-    crate::dictionary::learn_from_edit(pasted, after)
+    if let Ok(learned) = crate::dictionary::learn_pasted_in_context(pasted, after) {
+        if !learned.is_empty() {
+            return Ok(learned);
+        }
+    }
+
+    if !before.is_empty() && after.starts_with(before) {
+        let suffix = after[before.len()..].trim();
+        if !suffix.is_empty() && suffix != pasted {
+            return crate::dictionary::learn_from_edit(pasted, suffix);
+        }
+    }
+
+    if before.is_empty() && after.starts_with(pasted) {
+        return crate::dictionary::learn_from_edit(pasted, after);
+    }
+
+    Ok(Vec::new())
+}
+
+fn tokenize_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn synthetic_after_paste(before: &str, pasted: &str) -> String {
+    if before.is_empty() {
+        return pasted.to_string();
+    }
+    if before.ends_with(pasted) {
+        return before.to_string();
+    }
+    if before.ends_with(' ') || pasted.starts_with(|c: char| c.is_ascii_punctuation()) {
+        format!("{before}{pasted}")
+    } else {
+        format!("{before} {pasted}")
+    }
 }
 
 pub fn spawn_edit_learning_watch(
@@ -223,27 +306,51 @@ pub fn spawn_edit_learning_watch(
     target_pid: Option<i32>,
 ) {
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(1200));
+        thread::sleep(Duration::from_millis(1500));
         let mut stable: Option<String> = None;
-        for _ in 0..24 {
+        let mut stable_count = 0;
+        for attempt in 0..30 {
             let current = read_focused_field_text(target_pid);
             if let Some(field) = current {
                 let trimmed = field.trim().to_string();
                 if stable.as_deref() == Some(trimmed.as_str()) {
-                    if let Ok(learned) =
-                        try_learn_from_field_edit(&pasted, before.as_deref(), &trimmed)
-                    {
-                        for update in learned {
-                            tracing::info!("learned replacement: {} -> {}", update.from, update.to);
-                            let _ = app.emit("word_learned", update);
+                    stable_count += 1;
+                    if stable_count >= 2 {
+                        match try_learn_from_field_edit(&pasted, before.as_deref(), &trimmed) {
+                            Ok(learned) if !learned.is_empty() => {
+                                for update in learned {
+                                    tracing::info!(
+                                        "learned replacement: {} -> {}",
+                                        update.from,
+                                        update.to
+                                    );
+                                    crate::hud_cursor::notify_word_learned(&app, &update);
+                                }
+                            }
+                            Ok(_) => {
+                                tracing::debug!(
+                                    "edit watch: no learnable diff (pasted={:?}, after={:?})",
+                                    pasted,
+                                    trimmed
+                                );
+                            }
+                            Err(e) => tracing::warn!("edit watch learn failed: {:?}", e),
                         }
+                        return;
                     }
-                    return;
+                } else {
+                    stable = Some(trimmed);
+                    stable_count = 1;
                 }
-                stable = Some(trimmed);
+            } else if attempt == 0 {
+                tracing::debug!(
+                    "edit watch: focused field not readable (pid={:?})",
+                    target_pid
+                );
             }
-            thread::sleep(Duration::from_millis(400));
+            thread::sleep(Duration::from_millis(450));
         }
+        tracing::debug!("edit watch: timed out without stable field text");
     });
 }
 
@@ -253,7 +360,7 @@ mod macos {
     use std::ffi::c_void;
 
     use anyhow::{Context, Result};
-    use core_foundation::base::{CFTypeRef, TCFType};
+    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
     use core_foundation::string::CFString;
     use enigo::{Enigo, Keyboard, Settings};
     use objc::{class, msg_send, sel, sel_impl};
@@ -273,14 +380,44 @@ mod macos {
             attribute: CFStringRef,
             value: *mut CFTypeRef,
         ) -> i32;
+        fn AXUIElementCopyParameterizedAttributeValue(
+            element: *mut c_void,
+            attribute: CFStringRef,
+            parameter: CFTypeRef,
+            value: *mut CFTypeRef,
+        ) -> i32;
         fn AXUIElementSetAttributeValue(
             element: *mut c_void,
             attribute: CFStringRef,
             value: CFTypeRef,
         ) -> i32;
+        fn AXValueCreate(type_: u32, value: *const c_void) -> *mut c_void;
     }
 
+    #[allow(non_upper_case_globals)]
+    const kAXValueCFRangeType: u32 = 5;
+
     type CFStringRef = *const core_foundation::string::__CFString;
+
+    struct AxElement(*mut c_void);
+
+    impl AxElement {
+        fn new(ptr: *mut c_void) -> Self {
+            Self(ptr)
+        }
+
+        fn as_ptr(&self) -> *mut c_void {
+            self.0
+        }
+    }
+
+    impl Drop for AxElement {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { CFRelease(self.0 as CFTypeRef) };
+            }
+        }
+    }
 
     pub fn capture_frontmost_pid() -> Option<i32> {
         use cocoa::base::id;
@@ -301,8 +438,141 @@ mod macos {
         }
     }
 
+    pub fn ensure_target_active(target_pid: Option<i32>) {
+        let Some(pid) = target_pid else {
+            return;
+        };
+        if capture_frontmost_pid() == Some(pid) {
+            return;
+        }
+        if reactivate_app(pid) {
+            thread::sleep(Duration::from_millis(80));
+        }
+    }
+
+    pub fn is_browser_bundle_id(bundle_id: &str) -> bool {
+        matches!(
+            bundle_id,
+            "com.apple.Safari"
+                | "com.google.Chrome"
+                | "company.thebrowser.Browser"
+                | "org.mozilla.firefox"
+                | "com.microsoft.edgemac"
+                | "com.brave.Browser"
+        ) || bundle_id.starts_with("com.vivaldi")
+            || bundle_id.starts_with("com.operasoftware.Opera")
+            || bundle_id.starts_with("com.google.Chrome.canary")
+    }
+
+    pub fn is_browser_pid(target_pid: Option<i32>) -> bool {
+        target_pid
+            .and_then(bundle_id_for_pid)
+            .is_some_and(|id| is_browser_bundle_id(&id))
+    }
+
+    pub fn synth_paste_cgevent(target_pid: Option<i32>) -> Result<()> {
+        use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
+        use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+        const KEY_V: CGKeyCode = 0x09;
+
+        let source = CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| anyhow::anyhow!("CGEventSource init failed"))?;
+
+        let key_down = CGEvent::new_keyboard_event(source.clone(), KEY_V, true)
+            .map_err(|_| anyhow::anyhow!("paste key down failed"))?;
+        key_down.set_flags(CGEventFlags::CGEventFlagCommand);
+
+        let key_up = CGEvent::new_keyboard_event(source, KEY_V, false)
+            .map_err(|_| anyhow::anyhow!("paste key up failed"))?;
+        key_up.set_flags(CGEventFlags::CGEventFlagCommand);
+
+        if let Some(pid) = target_pid.filter(|pid| *pid > 0) {
+            key_down.post_to_pid(pid);
+            thread::sleep(Duration::from_millis(5));
+            key_up.post_to_pid(pid);
+        } else {
+            key_down.post(CGEventTapLocation::HID);
+            thread::sleep(Duration::from_millis(5));
+            key_up.post(CGEventTapLocation::HID);
+        }
+
+        Ok(())
+    }
+
+    fn reactivate_app(pid: i32) -> bool {
+        use cocoa::base::id;
+
+        const NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS: u64 = 1 << 1;
+
+        unsafe {
+            let app: id = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+            if app.is_null() {
+                return false;
+            }
+            let ok: bool = msg_send![
+                app,
+                activateWithOptions: NS_APPLICATION_ACTIVATE_IGNORING_OTHER_APPS
+            ];
+            if ok {
+                tracing::debug!("reactivated target app pid={pid}");
+            }
+            ok
+        }
+    }
+
+    fn bundle_id_for_pid(pid: i32) -> Option<String> {
+        use cocoa::base::id;
+        use std::ffi::CStr;
+
+        unsafe {
+            let app: id = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+            if app.is_null() {
+                return None;
+            }
+            let bundle: id = msg_send![app, bundleIdentifier];
+            if bundle.is_null() {
+                return None;
+            }
+            let cstr: *const i8 = msg_send![bundle, UTF8String];
+            if cstr.is_null() {
+                return None;
+            }
+            Some(CStr::from_ptr(cstr).to_string_lossy().into_owned())
+        }
+    }
+
     pub fn read_focused_text(target_pid: Option<i32>) -> Option<String> {
-        focused_element(target_pid).and_then(read_element_text)
+        focused_element(target_pid).and_then(read_element_tree_text)
+    }
+
+    fn read_element_tree_text(mut current: AxElement) -> Option<String> {
+        for _ in 0..4 {
+            if let Some(text) = read_element_text(current.as_ptr()) {
+                if !text.trim().is_empty() {
+                    return Some(text);
+                }
+            }
+            current = parent_element(current.as_ptr())?;
+        }
+        None
+    }
+
+    fn parent_element(element: *mut c_void) -> Option<AxElement> {
+        unsafe {
+            let parent_attr = CFString::new("AXParent");
+            let mut parent: CFTypeRef = std::ptr::null_mut();
+            if AXUIElementCopyAttributeValue(
+                element,
+                parent_attr.as_concrete_TypeRef() as CFStringRef,
+                &mut parent,
+            ) != AX_ERROR_SUCCESS
+                || parent.is_null()
+            {
+                return None;
+            }
+            Some(AxElement::new(parent as *mut c_void))
+        }
     }
 
     pub fn measure_paste_outcome(
@@ -329,7 +599,7 @@ mod macos {
         unsafe {
             let selected_attr = CFString::new("AXSelectedText");
             AXUIElementSetAttributeValue(
-                focused,
+                focused.as_ptr(),
                 selected_attr.as_concrete_TypeRef() as CFStringRef,
                 text_cf.as_concrete_TypeRef() as CFTypeRef,
             ) == AX_ERROR_SUCCESS
@@ -342,18 +612,20 @@ mod macos {
         Ok(())
     }
 
-    fn focused_element(target_pid: Option<i32>) -> Option<*mut c_void> {
+    fn focused_element(target_pid: Option<i32>) -> Option<AxElement> {
         unsafe {
             if let Some(pid) = target_pid {
-                if let Some(element) = focused_element_for_root(AXUIElementCreateApplication(pid)) {
+                let root = AxElement::new(AXUIElementCreateApplication(pid));
+                if let Some(element) = focused_element_for_root(root.as_ptr()) {
                     return Some(element);
                 }
             }
-            focused_element_for_root(AXUIElementCreateSystemWide())
+            let root = AxElement::new(AXUIElementCreateSystemWide());
+            focused_element_for_root(root.as_ptr())
         }
     }
 
-    unsafe fn focused_element_for_root(root: *mut c_void) -> Option<*mut c_void> {
+    unsafe fn focused_element_for_root(root: *mut c_void) -> Option<AxElement> {
         if root.is_null() {
             return None;
         }
@@ -368,12 +640,12 @@ mod macos {
         {
             return None;
         }
-        Some(focused as *mut c_void)
+        Some(AxElement::new(focused as *mut c_void))
     }
 
     fn read_element_text(element: *mut c_void) -> Option<String> {
         unsafe {
-            for attr in ["AXValue", "AXSelectedText"] {
+            for attr in ["AXSelectedText", "AXValue", "AXText"] {
                 let attr_cf = CFString::new(attr);
                 let mut value: CFTypeRef = std::ptr::null_mut();
                 if AXUIElementCopyAttributeValue(
@@ -391,8 +663,68 @@ mod macos {
                     }
                 }
             }
+            read_ax_full_text(element)
         }
-        None
+    }
+
+    fn read_ax_full_text(element: *mut c_void) -> Option<String> {
+        unsafe {
+            let count_attr = CFString::new("AXNumberOfCharacters");
+            let mut count_ref: CFTypeRef = std::ptr::null_mut();
+            if AXUIElementCopyAttributeValue(
+                element,
+                count_attr.as_concrete_TypeRef() as CFStringRef,
+                &mut count_ref,
+            ) != AX_ERROR_SUCCESS
+                || count_ref.is_null()
+            {
+                return None;
+            }
+            let count_number = core_foundation::number::CFNumber::wrap_under_get_rule(
+                count_ref as core_foundation::number::CFNumberRef,
+            );
+            let count = count_number.to_i64().unwrap_or(0);
+            if count <= 0 {
+                return None;
+            }
+
+            let range = core_foundation::base::CFRange {
+                location: 0,
+                length: count as isize,
+            };
+            let range_value =
+                AXValueCreate(kAXValueCFRangeType, &range as *const _ as *const c_void);
+            if range_value.is_null() {
+                return None;
+            }
+            let _range_guard = AxValueGuard(range_value);
+
+            let param_attr = CFString::new("AXStringForRange");
+            let mut string_ref: CFTypeRef = std::ptr::null_mut();
+            if AXUIElementCopyParameterizedAttributeValue(
+                element,
+                param_attr.as_concrete_TypeRef() as CFStringRef,
+                range_value as CFTypeRef,
+                &mut string_ref,
+            ) != AX_ERROR_SUCCESS
+                || string_ref.is_null()
+            {
+                return None;
+            }
+            cf_type_to_string(string_ref).filter(|text| !text.is_empty())
+        }
+    }
+
+    struct AxValueGuard(*mut c_void);
+
+    impl Drop for AxValueGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    CFRelease(self.0 as CFTypeRef);
+                }
+            }
+        }
     }
 
     unsafe fn cf_type_to_string(value: CFTypeRef) -> Option<String> {
@@ -439,5 +771,72 @@ mod tests {
         .unwrap();
         assert_eq!(learned.len(), 1);
         assert_eq!(learned[0].from, "Mackenzie");
+    }
+
+    #[test]
+    fn learns_cloud_to_claude_as_phrase() {
+        let learned = try_learn_from_field_edit(
+            "Let's use cloud for this",
+            Some(""),
+            "Let's use Claude for this",
+        )
+        .unwrap();
+        assert_eq!(learned.len(), 1);
+        assert_eq!(learned[0].from, "use cloud");
+        assert_eq!(learned[0].to, "use Claude");
+    }
+
+    #[test]
+    fn learns_cloud_to_claude_inside_larger_field_without_prefix() {
+        let learned = try_learn_from_field_edit(
+            "Let's use cloud for this",
+            None,
+            "Earlier note. Let's use Claude for this.",
+        )
+        .unwrap();
+        assert_eq!(learned.len(), 1);
+        assert_eq!(learned[0].from, "use cloud");
+        assert_eq!(learned[0].to, "use Claude");
+    }
+
+    #[test]
+    fn learns_merged_brand_name() {
+        let learned = try_learn_from_field_edit("whiz pop", Some(""), "WizPop").unwrap();
+        assert_eq!(learned.len(), 1);
+        assert_eq!(learned[0].from, "whiz pop");
+        assert_eq!(learned[0].to, "WizPop");
+    }
+
+    #[test]
+    fn restores_clipboard_only_when_paste_confirmed() {
+        assert!(super::should_restore_previous_clipboard(
+            PasteOutcome::Confirmed
+        ));
+        assert!(!super::should_restore_previous_clipboard(
+            PasteOutcome::Unverified
+        ));
+        assert!(!super::should_restore_previous_clipboard(
+            PasteOutcome::Failed
+        ));
+    }
+
+    #[test]
+    fn synthetic_after_paste_joins_with_space() {
+        assert_eq!(
+            super::synthetic_after_paste("Hello.", "whiz pop"),
+            "Hello. whiz pop"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn detects_common_browser_bundle_ids() {
+        use super::macos::is_browser_bundle_id;
+
+        assert!(is_browser_bundle_id("com.apple.Safari"));
+        assert!(is_browser_bundle_id("com.google.Chrome"));
+        assert!(is_browser_bundle_id("company.thebrowser.Browser"));
+        assert!(!is_browser_bundle_id("com.tinyspeck.slackmacgap"));
+        assert!(!is_browser_bundle_id("com.invisionnaire.dictaflow"));
     }
 }

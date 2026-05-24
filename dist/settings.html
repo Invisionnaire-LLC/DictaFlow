@@ -1,57 +1,116 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>DictaFlow Settings</title>
   <style>
+    :root {
+      --bg: #1a1a1e;
+      --sidebar: #141418;
+      --surface: #222228;
+      --surface-raised: #2a2a31;
+      --border: #34343c;
+      --border-soft: #2a2a31;
+      --text: #ececf0;
+      --muted: #9a9aa3;
+      --dim: #72727c;
+      --accent: #64b5f6;
+      --accent-strong: #1976d2;
+      --success: #81c784;
+      --error: #ef9a9a;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
     html, body {
       margin: 0;
       padding: 0;
-      min-height: 100%;
-      overflow-y: auto;
-      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-      background: #1e1e22;
-      color: #e8e8ec;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
     }
-    .wrap { padding: 22px 26px 26px; }
-    h1 { margin: 0 0 4px 0; font-size: 17px; font-weight: 600; }
-    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 14px; }
-    .section { margin-bottom: 22px; }
-    .section:last-of-type { margin-bottom: 0; }
-    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-    label { color: #9a9aa0; font-size: 12px; min-width: 64px; }
-    .check-row { align-items: center; min-height: 34px; }
-    .check-row label { flex: 1; min-width: 0; color: #e8e8ec; font-size: 13px; }
-    input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      accent-color: #1976d2;
+
+    .app {
+      display: grid;
+      grid-template-columns: 148px minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      height: 100vh;
     }
-    .combo {
-      flex: 1;
-      padding: 9px 12px;
-      background: #2a2a31;
-      border: 1px solid #3a3a42;
-      border-radius: 6px;
-      font-family: ui-monospace, Menlo, monospace;
-      font-size: 13px;
-      color: #e8e8ec;
-      min-height: 18px;
+
+    .sidebar {
+      grid-row: 1 / 3;
+      background: var(--sidebar);
+      border-right: 1px solid var(--border-soft);
+      padding: 18px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
-    .combo.recording {
-      border-color: #64b5f6;
-      background: #1c2a3a;
+
+    .sidebar-head {
+      padding: 0 10px 14px;
     }
-    select.combo {
-      height: 38px;
-      font-family: ui-monospace, Menlo, monospace;
-      appearance: none;
+
+    .sidebar-head h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
     }
-    input.combo {
-      box-sizing: border-box;
+
+    .sidebar-head p {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .nav-btn {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      padding: 9px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+
+    .nav-btn[aria-current="page"] {
+      background: rgba(100, 181, 246, 0.12);
+      color: var(--accent);
+    }
+
+    .nav-icon {
+      width: 16px;
+      text-align: center;
+      opacity: 0.85;
+      flex-shrink: 0;
+    }
+
+    .main {
       min-width: 0;
+      overflow-y: auto;
+      padding: 22px 22px 12px;
     }
-    textarea.combo {
+
+    textarea.control {
       box-sizing: border-box;
       width: 100%;
       resize: vertical;
@@ -59,291 +118,634 @@
       font-family: ui-monospace, Menlo, monospace;
       line-height: 1.4;
     }
+
+    .panel {
+      display: none;
+      animation: fadeIn 160ms ease;
+    }
+
+    .panel.active { display: block; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .panel.active { animation: none; }
+      .nav-btn { transition: none; }
+    }
+
+    .panel-head {
+      margin-bottom: 16px;
+    }
+
+    .panel-head h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .panel-head p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      max-width: 42ch;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius);
+      padding: 14px 14px 12px;
+      margin-bottom: 12px;
+    }
+
+    .card:last-child { margin-bottom: 0; }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin: 0 0 12px;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field:last-child { margin-bottom: 0; }
+
+    .field label,
+    .field .field-label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .control,
+    select.control {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      color: var(--text);
+      min-height: 40px;
+    }
+
+    select.control {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+    }
+
+    .control.recording {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(100, 181, 246, 0.25);
+      background: #1a2430;
+    }
+
+    .control[tabindex="0"] { cursor: text; outline: none; }
+
+    .control[tabindex="0"]:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.22);
+    }
+
     .combo-wrap {
-      flex: 1;
       position: relative;
+    }
+
+    .combo-row {
       display: flex;
       gap: 6px;
-      min-width: 0;
     }
-    .combo-wrap input.combo { flex: 1; }
+
+    .combo-row .control { flex: 1; min-width: 0; }
+
     .combo-toggle {
-      flex: 0 0 auto;
-      width: 34px;
+      flex: 0 0 40px;
+      width: 40px;
       padding: 0;
       font-size: 11px;
-      line-height: 1;
       display: flex;
       align-items: center;
       justify-content: center;
     }
+
     .combo-list {
       position: absolute;
       top: calc(100% + 4px);
       left: 0;
       right: 0;
       z-index: 20;
-      background: #2a2a31;
-      border: 1px solid #3a3a42;
-      border-radius: 6px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
       max-height: 220px;
       overflow-y: auto;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
       display: none;
     }
+
     .combo-list.open { display: block; }
+
     .combo-item {
       padding: 9px 12px;
       cursor: pointer;
-      font-family: ui-monospace, Menlo, monospace;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 13px;
       display: flex;
       align-items: baseline;
       gap: 8px;
     }
+
     .combo-item:hover,
-    .combo-item.active { background: #3a3a42; }
-    .combo-item.selected { color: #64b5f6; }
+    .combo-item.active { background: #35353d; }
+
+    .combo-item.selected { color: var(--accent); }
+
     .combo-item .meta {
       margin-left: auto;
-      color: #7a7a80;
+      color: var(--dim);
       font-size: 11px;
-      font-family: -apple-system, sans-serif;
+      font-family: inherit;
     }
-    button {
-      padding: 7px 13px;
-      background: #3a3a42;
-      border: 1px solid #4a4a52;
-      border-radius: 6px;
-      color: #e8e8ec;
+
+    .toggle-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-top: 1px solid var(--border-soft);
+    }
+
+    .toggle-row:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin-top: 2px;
+      accent-color: var(--accent-strong);
+      flex-shrink: 0;
+    }
+
+    .toggle-copy {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .toggle-copy strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+
+    .toggle-copy span {
+      display: block;
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.4;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 999px;
       font-size: 12px;
-      cursor: pointer;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--surface-raised);
     }
-    button:hover { background: #45454f; }
-    button.primary { background: #1976d2; border-color: #1565c0; }
+
+    .badge.ok {
+      color: var(--success);
+      border-color: rgba(129, 199, 132, 0.35);
+      background: rgba(129, 199, 132, 0.08);
+    }
+
+    .badge.err {
+      color: var(--error);
+      border-color: rgba(239, 154, 154, 0.35);
+      background: rgba(239, 154, 154, 0.08);
+    }
+
+    .badge.pending { color: var(--muted); }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      padding: 8px 12px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+
+    button:hover { background: #35353d; }
+
+    button.primary {
+      background: var(--accent-strong);
+      border-color: #1565c0;
+      color: #fff;
+    }
+
     button.primary:hover { background: #1e88e5; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .inline-actions { display: flex; gap: 6px; margin-top: 6px; }
-    .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.45;
+      margin-top: 10px;
+    }
+
     .msg {
-      margin-top: 8px;
+      margin-top: 10px;
       font-size: 11px;
       min-height: 14px;
     }
-    .msg.err { color: #ef9a9a; }
-    .msg.ok { color: #a5d6a7; }
-    .hint { font-size: 11px; color: #7a7a80; margin-top: 6px; line-height: 1.4; }
-    hr { border: 0; border-top: 1px solid #2e2e35; margin: 0; }
+
+    .msg.ok { color: var(--success); }
+    .msg.err { color: var(--error); }
+
+    .dict-list {
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      background: #17171b;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    .dict-empty {
+      padding: 22px 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .dict-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: 12px;
+    }
+
+    .dict-item:last-child { border-bottom: 0; }
+
+    .dict-pair {
+      flex: 1;
+      min-width: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .dict-pair .from { color: var(--muted); }
+    .dict-pair .arrow { color: var(--dim); margin: 0 4px; }
+    .dict-pair .to { color: var(--text); }
+
+    .dict-delete {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    .footer {
+      grid-column: 2;
+      border-top: 1px solid var(--border-soft);
+      padding: 10px 22px 14px;
+      display: flex;
+      justify-content: flex-end;
+      background: var(--bg);
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="section">
-      <h1>Hotkey</h1>
-      <div class="sub">Hold to dictate, or tap once to start and tap again to stop (works with mouse buttons).</div>
-
-      <div class="row">
-        <label>Current</label>
-        <div id="current" class="combo">-</div>
+  <div class="app">
+    <aside class="sidebar" aria-label="Settings sections">
+      <div class="sidebar-head">
+        <h1>Settings</h1>
+        <p>DictaFlow preferences</p>
       </div>
+      <button class="nav-btn" type="button" data-panel="dictation" aria-current="page">
+        <span class="nav-icon">⌨</span> Dictation
+      </button>
+      <button class="nav-btn" type="button" data-panel="display">
+        <span class="nav-icon">◫</span> Display
+      </button>
+      <button class="nav-btn" type="button" data-panel="cleanup">
+        <span class="nav-icon">✦</span> Cleanup
+      </button>
+      <button class="nav-btn" type="button" data-panel="vocabulary">
+        <span class="nav-icon">Aa</span> Vocabulary
+      </button>
+      <button class="nav-btn" type="button" data-panel="general">
+        <span class="nav-icon">⚙</span> General
+      </button>
+      <button class="nav-btn" type="button" data-panel="permissions">
+        <span class="nav-icon">◉</span> Permissions
+      </button>
+    </aside>
 
-      <div class="row">
-        <label>New</label>
-        <div id="capture" class="combo" tabindex="0">Click here, then press keys…</div>
-      </div>
+    <main class="main">
+      <section id="panel-dictation" class="panel active" aria-labelledby="nav-dictation">
+        <header class="panel-head">
+          <h2>Dictation</h2>
+          <p>Choose the global hotkey. Hold to talk, or tap twice to start and stop.</p>
+        </header>
 
-      <div class="hint">
-        macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try another key (e.g. F13, or Ctrl + Space). Hold the key to talk, or tap twice to start/stop. Useful for mouse side buttons that send a quick key press.
-      </div>
-
-      <div id="hkMsg" class="msg"></div>
-
-      <div class="inline-actions">
-        <button id="save" class="primary" disabled>Save hotkey</button>
-      </div>
-    </div>
-
-    <hr />
-
-    <div class="section">
-      <h1 style="margin-top: 18px">HUD</h1>
-      <div class="sub">Pick a style, then drag the pill where you want it.</div>
-
-      <div class="row">
-        <label>Style</label>
-        <select id="hudStyle" class="combo">
-          <option value="classic">Classic: bottom pill + waveform</option>
-          <option value="notch">Notch: top bar</option>
-        </select>
-      </div>
-
-      <div class="row check-row">
-        <input id="hudAlwaysOnTop" type="checkbox" />
-        <label for="hudAlwaysOnTop">Keep HUD above other windows</label>
-      </div>
-
-      <div class="row check-row">
-        <input id="liveTranscript" type="checkbox" />
-        <label for="liveTranscript">Show live transcript while recording</label>
-      </div>
-
-      <div class="inline-actions">
-        <button id="resetHudPosition" type="button">Reset pill position</button>
-      </div>
-      <div class="hint">Use reset if the pill disappears off-screen or behind other windows.</div>
-
-      <div id="hudStyleMsg" class="msg"></div>
-    </div>
-
-    <hr />
-
-    <div class="section">
-      <h1 style="margin-top: 18px">Transcription</h1>
-      <div class="sub">Where speech is turned into text. Local runs fully offline (default).</div>
-
-      <div class="row">
-        <label>Language</label>
-        <select id="asrLanguage" class="combo">
-          <option value="auto">Normal — detect &amp; keep spoken language</option>
-          <option value="en">Force English</option>
-          <option value="es">Español (forzar español)</option>
-          <option value="translate_en">Translate anything → English</option>
-        </select>
-      </div>
-
-      <div class="row">
-        <label>Backend</label>
-        <select id="asrBackend" class="combo">
-          <option value="local">Local — Whisper (offline, private)</option>
-          <option value="groq">Groq API (fast, cloud)</option>
-          <option value="openai">OpenAI API (cloud)</option>
-        </select>
-      </div>
-
-      <div id="asrCloudFields" style="display:none">
-        <div class="row">
-          <label>API key</label>
-          <input id="asrApiKey" class="combo" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your API key" />
+        <div class="card">
+          <div class="card-title">Hotkey</div>
+          <div class="field">
+            <span class="field-label">Current shortcut</span>
+            <div id="current" class="control">-</div>
+          </div>
+          <div class="field">
+            <span class="field-label">New shortcut</span>
+            <div id="capture" class="control" tabindex="0">Click here, then press keys…</div>
+          </div>
+          <div class="btn-row">
+            <button id="save" class="primary" disabled>Save hotkey</button>
+          </div>
+          <div id="hkMsg" class="msg"></div>
+          <p class="hint">
+            macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try F13 or Ctrl + Space. Side mouse buttons work well with tap-to-toggle.
+          </p>
         </div>
-        <div class="row">
-          <label>Model</label>
-          <select id="asrModel" class="combo"></select>
+
+        <div class="card">
+          <div class="card-title">Transcription</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">Where speech becomes text. Local runs fully offline (default).</p>
+
+          <div class="field">
+            <label for="asrLanguage">Language</label>
+            <select id="asrLanguage" class="control">
+              <option value="auto">Normal — detect &amp; keep spoken language</option>
+              <option value="en">Force English</option>
+              <option value="es">Español (forzar español)</option>
+              <option value="translate_en">Translate anything → English</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="asrBackend">Backend</label>
+            <select id="asrBackend" class="control">
+              <option value="local">Local — Whisper (offline, private)</option>
+              <option value="groq">Groq API (fast, cloud)</option>
+              <option value="openai">OpenAI API (cloud)</option>
+            </select>
+          </div>
+
+          <div id="asrCloudFields" style="display:none">
+            <div class="field">
+              <label for="asrApiKey">API key</label>
+              <input id="asrApiKey" class="control" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your API key" />
+            </div>
+            <div class="field">
+              <label for="asrModel">Model</label>
+              <select id="asrModel" class="control"></select>
+            </div>
+            <p class="hint" id="asrHint"></p>
+          </div>
+
+          <div class="toggle-row">
+            <input id="autoSubmit" type="checkbox" />
+            <div class="toggle-copy">
+              <strong>Press Enter automatically after pasting (auto-send)</strong>
+              <span>Useful in chat apps when you want to send immediately after dictating.</span>
+            </div>
+          </div>
+
+          <p class="hint">
+            Local keeps your voice on this Mac and needs no internet. Cloud backends send audio to a third party — faster and they free up ~1.5&nbsp;GB of RAM, but require an API key and internet.
+          </p>
+
+          <div id="asrMsg" class="msg"></div>
+          <div class="btn-row">
+            <button id="asrSave" class="primary" disabled>Save</button>
+          </div>
         </div>
-        <div class="hint" id="asrHint"></div>
-      </div>
 
-      <div class="row check-row">
-        <input id="autoSubmit" type="checkbox" />
-        <label for="autoSubmit">Press Enter automatically after pasting (auto-send)</label>
-      </div>
+        <div class="card">
+          <div class="card-title" style="display:flex;align-items:center;gap:10px">
+            <img src="petlaptop.png" alt="" width="28" height="28" style="image-rendering:pixelated;border-radius:6px" />
+            Custom words
+          </div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">Names, slang, and terms Whisper should recognize. Separate with commas.</p>
 
-      <div class="hint">
-        Local keeps your voice on this Mac and needs no internet. Cloud backends send audio to a third party — faster and they free up ~1.5&nbsp;GB of RAM, but require an API key and internet.
-      </div>
+          <div class="field">
+            <textarea id="vocab" class="control" rows="4" spellcheck="false" placeholder="e.g. Bayamón, Guaynabo, mofongo, Yadiel, chévere, brutal"></textarea>
+          </div>
 
-      <div id="asrMsg" class="msg"></div>
+          <p class="hint">
+            These bias transcription toward your words — great for Puerto Rican terms and Spanish names. Works with local and cloud backends.
+          </p>
 
-      <div class="inline-actions">
-        <button id="asrSave" class="primary" disabled>Save</button>
-      </div>
-    </div>
-
-    <hr />
-
-    <div class="section">
-      <div style="display:flex; align-items:center; gap:10px; margin-top:18px">
-        <img src="petlaptop.png" alt="" width="34" height="34" style="image-rendering: pixelated; border-radius:6px; flex:none" />
-        <h1 style="margin:0">Custom words</h1>
-      </div>
-      <div class="sub">Names, slang, and terms Whisper should recognize. Separate with commas.</div>
-
-      <textarea id="vocab" class="combo" rows="4" spellcheck="false" placeholder="e.g. Bayamón, Guaynabo, mofongo, Yadiel, chévere, brutal"></textarea>
-
-      <div class="hint">
-        These bias transcription toward your words — great for Puerto Rican terms and Spanish names. Works with local and cloud backends.
-      </div>
-
-      <div id="vocabMsg" class="msg"></div>
-
-      <div class="inline-actions">
-        <button id="vocabSave" class="primary" disabled>Save words</button>
-      </div>
-    </div>
-
-    <hr />
-
-    <div class="section">
-      <h1 style="margin-top: 18px">Cleanup</h1>
-      <div class="sub">Choose the local Ollama model used after rules cleanup.</div>
-
-      <div class="row">
-        <label>Model</label>
-        <div class="combo-wrap">
-          <input id="ollamaModel" class="combo" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
-          <button id="ollamaToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
-          <div id="ollamaList" class="combo-list" role="listbox"></div>
+          <div id="vocabMsg" class="msg"></div>
+          <div class="btn-row">
+            <button id="vocabSave" class="primary" disabled>Save words</button>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div class="hint">
-        Type any Ollama model, or click ▾ to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
-      </div>
+      <section id="panel-display" class="panel" aria-labelledby="nav-display">
+        <header class="panel-head">
+          <h2>Display</h2>
+          <p>Control the floating HUD pill and live transcript preview.</p>
+        </header>
 
-      <div id="ollamaMsg" class="msg"></div>
+        <div class="card">
+          <div class="card-title">HUD</div>
+          <div class="field">
+            <label for="hudStyle">Style</label>
+            <select id="hudStyle" class="control">
+              <option value="classic">Classic: bottom pill + waveform</option>
+              <option value="notch">Notch: top bar</option>
+              <option value="cursor">Cursor: follows mouse + waveform</option>
+            </select>
+          </div>
 
-      <div class="inline-actions">
-        <button id="ollamaSave" class="primary" disabled>Save model</button>
-        <button id="ollamaRefresh">Refresh models</button>
-      </div>
-    </div>
+          <div class="toggle-row">
+            <input id="hudAlwaysOnTop" type="checkbox" />
+            <div class="toggle-copy">
+              <strong>Keep HUD above other windows</strong>
+              <span>When off, the pill only floats up while you dictate.</span>
+            </div>
+          </div>
 
-    <hr />
+          <div class="toggle-row">
+            <input id="liveTranscript" type="checkbox" />
+            <div class="toggle-copy">
+              <strong>Show live transcript while recording</strong>
+              <span>Preview words in the HUD before you release the hotkey.</span>
+            </div>
+          </div>
 
-    <div class="section">
-      <h1 style="margin-top: 18px">System</h1>
-      <div class="sub">macOS startup behavior.</div>
+          <div class="btn-row">
+            <button id="resetHudPosition" type="button">Reset pill position</button>
+          </div>
+          <p class="hint">Use reset for Classic or Notch if the pill disappears off-screen. Cursor style tracks your mouse while dictating.</p>
+          <div id="cursorHudStatus" class="hint" hidden></div>
+          <div id="hudStyleMsg" class="msg"></div>
+        </div>
+      </section>
 
-      <div class="row check-row">
-        <input id="launchAtLogin" type="checkbox" />
-        <label for="launchAtLogin">Open DictaFlow at login</label>
-      </div>
+      <section id="panel-cleanup" class="panel" aria-labelledby="nav-cleanup">
+        <header class="panel-head">
+          <h2>Cleanup</h2>
+          <p>Pick the local Ollama model used after rules cleanup. Rules always run first.</p>
+        </header>
 
-      <div id="loginMsg" class="msg"></div>
-    </div>
+        <div class="card">
+          <div class="card-title">Ollama model</div>
+          <div class="field">
+            <label for="ollamaModel">Model name</label>
+            <div class="combo-wrap">
+              <div class="combo-row">
+                <input id="ollamaModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
+                <button id="ollamaToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
+              </div>
+              <div id="ollamaList" class="combo-list" role="listbox"></div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="ollamaSave" class="primary" disabled>Save model</button>
+            <button id="ollamaRefresh" type="button">Refresh list</button>
+          </div>
+          <div id="ollamaMsg" class="msg"></div>
+          <p class="hint">
+            Type any Ollama model, or open the list to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
+          </p>
+        </div>
+      </section>
 
-    <hr />
+      <section id="panel-vocabulary" class="panel" aria-labelledby="nav-vocabulary">
+        <header class="panel-head">
+          <h2>Vocabulary</h2>
+          <p>Words DictaFlow learned when you corrected pasted text. They apply on future dictations.</p>
+        </header>
 
-    <div class="section">
-      <h1 style="margin-top: 18px">Permissions (macOS)</h1>
-      <div class="sub">DictaFlow needs Accessibility to paste at your cursor, and Microphone to record.</div>
+        <div class="card">
+          <div class="card-title">Learned replacements</div>
+          <div id="dictList" class="dict-list">
+            <div class="dict-empty">Loading…</div>
+          </div>
+          <div class="btn-row">
+            <button id="dictRefresh" type="button">Refresh</button>
+          </div>
+          <div id="dictMsg" class="msg"></div>
+          <p class="hint">
+            Fix a word after dictating, or use History → Save and learn. DictaFlow picks up the correction automatically.
+            Common words like <em>cloud</em> are learned as phrases (e.g. “use cloud” → “use Claude”) so weather talk stays intact.
+          </p>
+        </div>
+      </section>
 
-      <div class="row">
-        <label>Accessibility</label>
-        <div id="axStatus" class="combo">Checking…</div>
-      </div>
+      <section id="panel-general" class="panel" aria-labelledby="nav-general">
+        <header class="panel-head">
+          <h2>General</h2>
+          <p>Startup and background behavior.</p>
+        </header>
 
-      <div class="hint">
-        If paste silently fails after a rebuild, toggle Accessibility off → on for <b>dictaflow</b>. macOS revokes trust when the binary signature changes.
-      </div>
+        <div class="card">
+          <div class="card-title">Startup</div>
+          <div class="toggle-row">
+            <input id="launchAtLogin" type="checkbox" />
+            <div class="toggle-copy">
+              <strong>Open DictaFlow at login</strong>
+              <span>Keep the menu bar agent ready without launching the app manually.</span>
+            </div>
+          </div>
+          <div id="loginMsg" class="msg"></div>
+          <p class="hint build-info">Build <span id="buildVersion">…</span> · <span id="buildHash">…</span></p>
+        </div>
+      </section>
 
-      <div class="inline-actions">
-        <button id="axRequest" class="primary">Request Accessibility</button>
-        <button id="axRecheck">Re-check</button>
-        <button id="axOpen">Open Accessibility Settings</button>
-        <button id="micOpen">Open Microphone Settings</button>
-      </div>
-      <div class="hint">
-        First time setup: click <b>Request Accessibility</b>. macOS will prompt you and add <b>dictaflow</b> to the list. Then toggle it on.
-      </div>
-    </div>
+      <section id="panel-permissions" class="panel" aria-labelledby="nav-permissions">
+        <header class="panel-head">
+          <h2>Permissions</h2>
+          <p>DictaFlow needs Accessibility to paste at your cursor and Microphone to record.</p>
+        </header>
 
-    <div class="actions">
-      <button id="close">Close</button>
-    </div>
+        <div class="card">
+          <div class="card-title">macOS access</div>
+          <div class="field">
+            <span class="field-label">Accessibility</span>
+            <div id="axStatus" class="badge pending">Checking…</div>
+          </div>
+          <div class="btn-row">
+            <button id="axRequest" class="primary" type="button">Request Accessibility</button>
+            <button id="axRecheck" type="button">Re-check</button>
+            <button id="axOpen" type="button">Accessibility Settings</button>
+            <button id="micOpen" type="button">Microphone Settings</button>
+          </div>
+          <p class="hint">
+            First time: click <b>Request Accessibility</b>, then toggle <b>dictaflow</b> on in System Settings. If paste fails after a rebuild, toggle the permission off and on again.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <button id="close" type="button">Close</button>
+    </footer>
   </div>
 
   <script>
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        if (window.__TAURI__?.core?.invoke) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (!window.__TAURI__?.core?.invoke) return;
+
     const invoke = window.__TAURI__.core.invoke;
+
+    const navButtons = document.querySelectorAll(".nav-btn");
+    const panels = document.querySelectorAll(".panel");
+
+    navButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.panel;
+        navButtons.forEach((b) => b.removeAttribute("aria-current"));
+        btn.setAttribute("aria-current", "page");
+        panels.forEach((panel) => {
+          panel.classList.toggle("active", panel.id === `panel-${id}`);
+        });
+        if (id === "vocabulary") loadDictionary();
+      });
+    });
 
     const currentEl = document.getElementById("current");
     const captureEl = document.getElementById("capture");
@@ -364,6 +766,10 @@
     const hudAlwaysOnTopEl = document.getElementById("hudAlwaysOnTop");
     const liveTranscriptEl = document.getElementById("liveTranscript");
     const resetHudPositionBtn = document.getElementById("resetHudPosition");
+
+    const dictListEl = document.getElementById("dictList");
+    const dictMsgEl = document.getElementById("dictMsg");
+    const dictRefreshBtn = document.getElementById("dictRefresh");
 
     let pending = null;
     let currentOllamaModel = "";
@@ -403,7 +809,6 @@
       ollamaMsgEl.className = kind ? `msg ${kind}` : "msg";
     }
 
-    // Dropdown items: gemma3:1b default is always first, so it is always pickable.
     let comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
 
     function renderComboList() {
@@ -423,7 +828,6 @@
           meta.textContent = item.meta;
           row.appendChild(meta);
         }
-        // mousedown (not click) so it fires before the input's blur.
         row.addEventListener("mousedown", (e) => {
           e.preventDefault();
           ollamaModelEl.value = item.value;
@@ -436,10 +840,11 @@
     }
 
     function openComboList() {
-      renderComboList(); // always shows the full list (picker, not search)
+      renderComboList();
       ollamaListEl.classList.add("open");
       ollamaToggleEl.setAttribute("aria-expanded", "true");
     }
+
     function closeComboList() {
       ollamaListEl.classList.remove("open");
       ollamaToggleEl.setAttribute("aria-expanded", "false");
@@ -473,7 +878,6 @@
         }
       } catch (err) {
         current = await invoke("get_ollama_model").catch(() => "");
-        // Ollama unreachable: still offer the default so it stays pickable.
         comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
         setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
       }
@@ -499,6 +903,65 @@
       }
     }
     loadLaunchAtLogin();
+
+    function setDictMessage(text, kind = "") {
+      dictMsgEl.textContent = text;
+      dictMsgEl.className = kind ? `msg ${kind}` : "msg";
+    }
+
+    async function loadDictionary() {
+      dictListEl.innerHTML = '<div class="dict-empty">Loading…</div>';
+      setDictMessage("");
+      try {
+        const items = await invoke("list_dictionary");
+        if (!items.length) {
+          dictListEl.innerHTML = '<div class="dict-empty">No learned words yet.<br>Correct pasted text and DictaFlow will remember it.</div>';
+          return;
+        }
+        dictListEl.innerHTML = "";
+        for (const item of items) {
+          const row = document.createElement("div");
+          row.className = "dict-item";
+          const pair = document.createElement("div");
+          pair.className = "dict-pair";
+          pair.innerHTML = `<span class="from">${escapeHtml(item.from)}</span><span class="arrow">→</span><span class="to">${escapeHtml(item.to)}</span>`;
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "dict-delete";
+          del.textContent = "Remove";
+          del.addEventListener("click", async () => {
+            del.disabled = true;
+            row.remove();
+            try {
+              await invoke("delete_dictionary_entry", { from: item.from });
+              setDictMessage(`Removed ${item.from}.`, "ok");
+              if (!dictListEl.childElementCount) {
+                dictListEl.innerHTML = '<div class="dict-empty">No learned words yet.<br>Correct pasted text and DictaFlow will remember it.</div>';
+              }
+            } catch (err) {
+              setDictMessage(String(err), "err");
+              await loadDictionary();
+            }
+          });
+          row.appendChild(pair);
+          row.appendChild(del);
+          dictListEl.appendChild(row);
+        }
+      } catch (err) {
+        dictListEl.innerHTML = '<div class="dict-empty">Could not load dictionary.</div>';
+        setDictMessage(String(err), "err");
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    dictRefreshBtn.addEventListener("click", loadDictionary);
 
     const MODIFIER_CODES = new Set([
       "ControlLeft", "ControlRight",
@@ -626,23 +1089,22 @@
       invoke("close_settings").catch(() => {});
     });
 
-    // --- Permissions ---
-
     const axStatusEl = document.getElementById("axStatus");
     async function refreshAx() {
       axStatusEl.textContent = "Checking…";
-      axStatusEl.style.color = "";
+      axStatusEl.className = "badge pending";
       try {
         const granted = await invoke("check_accessibility");
         if (granted) {
-          axStatusEl.textContent = "Granted ✓";
-          axStatusEl.style.color = "#a5d6a7";
+          axStatusEl.textContent = "Granted";
+          axStatusEl.className = "badge ok";
         } else {
-          axStatusEl.textContent = "Not granted. Paste will silently fail.";
-          axStatusEl.style.color = "#ef9a9a";
+          axStatusEl.textContent = "Not granted";
+          axStatusEl.className = "badge err";
         }
       } catch (e) {
-        axStatusEl.textContent = "(error checking)";
+        axStatusEl.textContent = "Error checking";
+        axStatusEl.className = "badge err";
       }
     }
     refreshAx();
@@ -673,6 +1135,9 @@
         hudStyleEl.value = style;
         hudAlwaysOnTopEl.checked = alwaysOnTop;
         liveTranscriptEl.checked = liveTranscript;
+        if (typeof refreshCursorHudStatus === "function") {
+          refreshCursorHudStatus();
+        }
       } catch (err) {
         console.error(err);
       }
@@ -731,8 +1196,13 @@
       try {
         const saved = await invoke("set_hud_style", { style: hudStyleEl.value });
         hudStyleEl.value = saved;
-        hudStyleMsgEl.textContent = saved === "notch" ? "Notch style." : "Classic style.";
+        hudStyleMsgEl.textContent = saved === "notch"
+          ? "Notch style."
+          : saved === "cursor"
+            ? "Cursor style."
+            : "Classic style.";
         hudStyleMsgEl.className = "msg ok";
+        refreshCursorHudStatus();
       } catch (err) {
         hudStyleMsgEl.textContent = String(err);
         hudStyleMsgEl.className = "msg err";
@@ -930,6 +1400,53 @@
         vocabSaveBtn.disabled = false;
       }
     });
+
+    async function refreshCursorHudStatus() {
+      if (!cursorHudStatusEl) return;
+      const style = hudStyleEl.value;
+      if (style !== "cursor") {
+        cursorHudStatusEl.hidden = true;
+        return;
+      }
+      try {
+        const status = await invoke("get_cursor_hud_status");
+        cursorHudStatusEl.hidden = false;
+        cursorHudStatusEl.textContent =
+          status === "ready"
+            ? "Cursor tracking: ready"
+            : "Cursor tracking: unavailable — pill may appear on the wrong screen";
+      } catch {
+        cursorHudStatusEl.hidden = true;
+      }
+    }
+
+    async function loadBuildInfo() {
+      try {
+        const info = await invoke("get_build_info");
+        if (buildVersionEl) buildVersionEl.textContent = info.version;
+        if (buildHashEl) buildHashEl.textContent = info.git_hash;
+      } catch {
+        if (buildVersionEl) buildVersionEl.textContent = "?";
+        if (buildHashEl) buildHashEl.textContent = "?";
+      }
+    }
+
+    const cursorHudStatusEl = document.getElementById("cursorHudStatus");
+    const buildVersionEl = document.getElementById("buildVersion");
+    const buildHashEl = document.getElementById("buildHash");
+
+    loadBuildInfo();
+    refreshCursorHudStatus();
+
+    if (window.__TAURI__?.event?.listen) {
+      window.__TAURI__.event.listen("word_learned", () => {
+        const vocabPanel = document.getElementById("panel-vocabulary");
+        if (vocabPanel && vocabPanel.classList.contains("active")) {
+          loadDictionary();
+        }
+      });
+    }
+    })();
   </script>
 </body>
 </html>
