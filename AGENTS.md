@@ -258,6 +258,14 @@ o ad-hoc y avisa que Accessibility puede resetearse en cada rebuild.
 
 ---
 
+## 🔒 Seguridad
+Auditoría completa (App Store readiness, sandbox, hardening, dependencias) en
+**[`SECURITY.md`](SECURITY.md)**. TL;DR: el código está listo; se distribuye por
+**Developer ID + notarización**, **no** por el App Store, porque el App Sandbox bloquea
+el core (pegar en otras apps vía Accessibility/CGEvent).
+
+---
+
 ## Skills útiles para este repo
 - `diagnose` — para regresiones con loop de feedback claro (así se resolvió el bug de TCC).
 - `macos-dev-pro` / `macos-ui-pro` — firma, LaunchAgent, LSUIElement, TCC/Accessibility,
