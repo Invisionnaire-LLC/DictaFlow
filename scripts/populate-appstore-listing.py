@@ -19,24 +19,33 @@ INFO_ID = "c3467077-2484-49ff-9508-2c7b2a806337"
 VERSION_LOC_ID = "c01e7439-a4f1-4e57-b7ef-029be2e13886"
 INFO_LOC_ID = "621554f5-1337-4989-b7f4-88b7e663f85b"
 
-DESCRIPTION = """DictaFlow is local first dictation for Mac. Hold a hotkey, speak, release. Cleaned text appears at your cursor. No cloud account required.
+DESCRIPTION = """DictaFlow is local-first dictation for Mac. Hold a hotkey, speak, release. Cleaned text appears at your cursor.
 
 FEATURES
 • Dictate anywhere you type with a global hotkey (hold or tap to start/stop)
-• Transcribes locally with Whisper. Your voice stays on your Mac
+• Transcribes locally with Whisper — your voice stays on your Mac by default
+• Optional cloud transcription (Groq or OpenAI) when you want speed over offline privacy
+• Language modes: auto-detect, force English or Spanish, or translate to English
+• Custom vocabulary for names, slang, and terms Whisper should recognize
 • Cleans up punctuation, fillers, and spacing with on-device rules
 • Optional Ollama cleanup for smarter phrasing (runs locally)
-• Menu bar app with a draggable HUD pill and live transcript preview
-• Choose your hotkey, HUD style, and Ollama model in Settings
+• Menu bar app with Classic, Notch, or Cursor HUD styles and live transcript preview
+• Learns corrections when you edit pasted text — no review step required
+• Multi-monitor HUD follows the display you are working on
 
 PERMISSIONS
-DictaFlow asks for Microphone (record), Accessibility (paste at your cursor), and Input Monitoring (global hotkey). Processing stays on your machine.
+DictaFlow asks for Microphone (record), Accessibility (paste at your cursor), and Input Monitoring (global hotkey). Local transcription and cleanup stay on your machine unless you enable a cloud backend in Settings.
 
 Built by Invisionnaire."""
 
-PROMO = "Speak naturally. DictaFlow transcribes and pastes locally. No cloud, no subscription."
-KEYWORDS = "dictation,transcription,whisper,voice typing,speech to text,local,privacy,productivity,ollama"
-WHATS_NEW = "Initial Mac release: local Whisper transcription, Ollama cleanup, global hotkey dictation, and menu bar HUD."
+PROMO = "Speak naturally. DictaFlow transcribes locally, cleans up, and pastes at your cursor."
+KEYWORDS = "dictation,transcription,whisper,voice typing,speech to text,local,privacy,productivity,ollama,mac"
+WHATS_NEW = """• Refreshed app icon
+• Cursor-following HUD style for multi-monitor setups
+• Optional cloud transcription (Groq/OpenAI) and custom vocabulary
+• Language modes and auto-send after paste
+• Improved paste reliability in Electron apps like Telegram
+• Panel-based Settings with build info and learned-word dictionary"""
 SUBTITLE = "Local dictation at your cursor"
 SUPPORT_URL = "https://github.com/Invisionnaire-LLC/DictaFlow/issues"
 MARKETING_URL = "https://github.com/Invisionnaire-LLC/DictaFlow"
@@ -97,7 +106,8 @@ def main() -> None:
             }
         },
     )
-    print("updated version localization (description, keywords, URLs, what's new)")
+    print("updated version localization (description, keywords, URLs, promo)")
+    print(f"(what's new draft for later: {WHATS_NEW[:80]}…)")
 
     api(
         "PATCH",
@@ -156,8 +166,8 @@ def main() -> None:
                 "notes": (
                     "DictaFlow is a menu bar dictation utility. "
                     "Grant Microphone, Accessibility, and Input Monitoring when prompted. "
-                    "Default hotkey is F9; hold to dictate or tap twice to start/stop. "
-                    "All transcription runs locally with Whisper; no login required."
+                    "Default hotkey is Option+Z (Alt+Z); hold to dictate or tap twice to start/stop. "
+                    "Local Whisper transcription is the default; cloud backends are optional in Settings."
                 ),
             },
             "relationships": {

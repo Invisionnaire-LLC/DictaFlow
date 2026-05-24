@@ -4,7 +4,7 @@
     "shortDescription": "Local dictation at your cursor",
     "longDescription": "Hold a hotkey, speak, release. DictaFlow transcribes locally with Whisper and cleans up with Ollama.",
     "macOS": {
-      "bundleVersion": "2",
+      "bundleVersion": "3",
       "entitlements": "./Entitlements.appstore.plist",
       "minimumSystemVersion": "12.0",
       "signingIdentity": "3rd Party Mac Developer Application: Adrian Rosario (W26D33D5D5)",

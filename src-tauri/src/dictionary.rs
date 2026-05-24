@@ -271,14 +271,17 @@ pub fn whisper_prompt() -> String {
         .collect();
     words.sort_by_key(|w| w.to_ascii_lowercase());
     words.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    if words.is_empty() {
+        return String::new();
+    }
 
-    let mut out = String::from("DictaFlow, Invisionnaire");
-    for word in words {
+    let mut out = words[0].clone();
+    for word in words.iter().skip(1) {
         if out.len() + word.len() + 2 > MAX_PROMPT_CHARS {
             break;
         }
         out.push_str(", ");
-        out.push_str(&word);
+        out.push_str(word);
     }
     out.push('.');
     out

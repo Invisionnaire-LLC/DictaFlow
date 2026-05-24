@@ -182,7 +182,7 @@ DictaFlow learns locally from your corrections. There is no CSV import and no re
 | Fix pasted text in the app where it landed | Background watch detects the edit and learns word-level replacements |
 | **History…** → edit cleaned text → **Save and learn** | Same learning path, useful if you notice a mistake later |
 
-Learned replacements are stored in `dictionary.json`, applied during cleanup, and merged into `vocabulary.txt` for Whisper. The HUD briefly shows `Learned: old → new` when a correction is picked up.
+Learned replacements are stored in `dictionary.json`, applied during cleanup, and included in the Whisper prompt at transcribe time. Custom words you add in Settings are stored separately in `vocabulary.txt`. The HUD briefly shows `Learned: old → new` when a correction is picked up.
 
 ---
 

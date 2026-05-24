@@ -18,18 +18,6 @@ pub const MODEL_URL: &str =
 pub const EXPECTED_BYTES: u64 = 1_624_555_275;
 
 pub const VOCAB_FILENAME: &str = "vocabulary.txt";
-const DEFAULT_VOCAB: &str =
-    "DictaFlow, Invisionnaire, boricua, Puerto Rico, brutal, chévere, bregar, \
-janguear, jangueo, perreo, revolú, chavos, china, guagua, zafacón, chinchorro, chinchorreo, \
-mofongo, pernil, lechón, alcapurria, bacalaíto, tostones, tembleque, coquito, piragua, parcha, \
-gandules, sofrito, pana, broki, corillo, nene, nena, jevo, jeva, acho, wepa, jíbaro, coquí, \
-cangri, bichote, al garete, ay bendito, ñoño, gufeao, mamey, jumeta, parguero, melao, \
-Bayamón, Guaynabo, Caguas, Carolina, Ponce, Mayagüez, Arecibo, Humacao, Fajardo, Aguadilla, \
-Cataño, Río Piedras, Santurce, Loíza, Vieques, Culebra, San Juan, Cayey, Utuado, Yauco, \
-Manatí, Vega Baja, Trujillo Alto, José, María, Juan, Luis, Carlos, Miguel, Ángel, Rafael, \
-Héctor, Ramón, Jesús, Javier, Yadiel, Yaritza, Yamil, Glorimar, Keishla, Génesis, Adrián, \
-Wanda, Iris, Milagros, Carmen, Rosa, Edwin, Wilfredo, Heriberto, Eddie, Adrian, Zuly, Jowy, \
-Eduardo, Enter, Auto Enter.\n";
 
 pub struct Transcriber {
     ctx: Mutex<WhisperContext>,
@@ -52,7 +40,6 @@ impl Transcriber {
             params,
         )
         .context("whisper context init")?;
-        seed_vocabulary_if_missing();
         Ok(Transcriber {
             ctx: Mutex::new(ctx),
         })
@@ -252,18 +239,6 @@ pub fn vocabulary_path() -> Option<PathBuf> {
     Some(dir.join(VOCAB_FILENAME))
 }
 
-fn seed_vocabulary_if_missing() {
-    if let Some(path) = vocabulary_path() {
-        if !path.exists() {
-            if let Err(e) = fs::write(&path, DEFAULT_VOCAB) {
-                tracing::warn!("could not seed vocabulary at {}: {:?}", path.display(), e);
-            } else {
-                tracing::info!("seeded vocabulary at {}", path.display());
-            }
-        }
-    }
-}
-
 fn load_vocabulary() -> String {
     match vocabulary_path() {
         Some(path) => fs::read_to_string(&path)
@@ -276,7 +251,6 @@ fn load_vocabulary() -> String {
 
 /// User-editable custom words/names (comma-separated) that bias transcription.
 pub fn read_vocabulary() -> String {
-    seed_vocabulary_if_missing();
     load_vocabulary()
 }
 

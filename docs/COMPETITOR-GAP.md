@@ -60,7 +60,7 @@ Legend: ✅ shipped · ⚠️ partial · ❌ missing · — not applicable
 
 | Feature | Wispr Flow | DictaFlow | Notes |
 |---|---|---|---|
-| User-editable custom dictionary | ✅ | ❌ | We seed Whisper `vocabulary.txt` with brand names only |
+| User-editable custom dictionary | ✅ | ❌ | User adds terms in Settings; learned words merge at transcribe time |
 | Snippets / text expansions | ✅ | ❌ | |
 | Searchable transcription history | ✅ | ❌ | We save debug WAVs; no history UI |
 | Replay audio with word-by-word highlight | ✅ | ❌ | |
