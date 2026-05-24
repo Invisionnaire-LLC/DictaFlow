@@ -28,7 +28,8 @@ Bayamón, Guaynabo, Caguas, Carolina, Ponce, Mayagüez, Arecibo, Humacao, Fajard
 Cataño, Río Piedras, Santurce, Loíza, Vieques, Culebra, San Juan, Cayey, Utuado, Yauco, \
 Manatí, Vega Baja, Trujillo Alto, José, María, Juan, Luis, Carlos, Miguel, Ángel, Rafael, \
 Héctor, Ramón, Jesús, Javier, Yadiel, Yaritza, Yamil, Glorimar, Keishla, Génesis, Adrián, \
-Wanda, Iris, Milagros, Carmen, Rosa, Edwin, Wilfredo, Heriberto.\n";
+Wanda, Iris, Milagros, Carmen, Rosa, Edwin, Wilfredo, Heriberto, Eddie, Adrian, Zuly, Jowy, \
+Eduardo.\n";
 
 pub struct Transcriber {
     ctx: Mutex<WhisperContext>,
