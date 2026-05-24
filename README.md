@@ -26,7 +26,7 @@ See [docs/COMPETITOR-GAP.md](docs/COMPETITOR-GAP.md) for a Wispr Flow feature co
 ## How it works
 
 ```
-Hotkey pressed  (default F9, configurable in Settings)
+Hotkey pressed  (default Option+Space, configurable in Settings)
     │
     ▼
 AudioController (cpal)  ──►  16 kHz mono f32 buffer
@@ -173,23 +173,25 @@ Without Ollama, DictaFlow silently falls back to rules-only cleanup. The app nev
 
 ---
 
-## Custom vocabulary
+## Vocabulary
 
-DictaFlow learns locally from your corrections. There is no CSV import and no review window before paste.
+Settings → **Vocabulary** is one place for names Whisper should recognize and corrections when it gets them wrong.
 
-| How you teach it | What happens |
-|---|---|
-| Fix pasted text in the app where it landed | Background watch detects the edit and learns word-level replacements |
-| **History…** → edit cleaned text → **Save and learn** | Same learning path, useful if you notice a mistake later |
+| Type | Example | How it helps |
+|---|---|---|
+| **Words to recognize** | `McKenzie, Anthropic, CUDA` | Biases transcription before you dictate |
+| **Corrections** | `use cloud` → `use Claude` | Fixes output after dictation; also feeds future prompts |
 
-Learned replacements are stored in `dictionary.json`, applied during cleanup, and included in the Whisper prompt at transcribe time. Custom words you add in Settings are stored separately in `vocabulary.txt`. The HUD briefly shows `Learned: old → new` when a correction is picked up.
+Corrections are learned automatically when you fix pasted text, or you can add them manually in Settings. Use **History…** → edit → **Save and learn** for the same learning path. The HUD briefly shows when a correction is picked up.
+
+Stored locally in `vocabulary.txt` (words) and `dictionary.json` (corrections).
 
 ---
 
 ## Daily use
 
 1. Click into any text field (Notes, Slack, browser, terminal, anywhere).
-2. Hold your hotkey (default **F9**, change in Settings), speak, release.
+2. Hold your hotkey (default **Option+Space**, change in Settings), speak, release.
 3. Cleaned text appears at your cursor. Fix any word in place if needed; DictaFlow remembers it for next time.
 
 The tray icon (frog in your menu bar / system tray) is the home for the app. Right-click it for the menu:
@@ -214,8 +216,8 @@ The floating HUD pill shows state:
 |---|---|---|
 | Whisper model | `~/Library/Application Support/DictaFlow/models/` | `%LOCALAPPDATA%\DictaFlow\models\` |
 | Settings (hotkey, mic, HUD position) | `~/Library/Application Support/DictaFlow/settings.json` | `%APPDATA%\DictaFlow\settings.json` |
-| Learned dictionary | `~/Library/Application Support/DictaFlow/dictionary.json` | `%LOCALAPPDATA%\DictaFlow\dictionary.json` |
-| Whisper vocabulary prompt | `~/Library/Application Support/DictaFlow/vocabulary.txt` | `%LOCALAPPDATA%\DictaFlow\vocabulary.txt` |
+| Vocabulary (corrections) | `~/Library/Application Support/DictaFlow/dictionary.json` | `%LOCALAPPDATA%\DictaFlow\dictionary.json` |
+| Vocabulary (words to recognize) | `~/Library/Application Support/DictaFlow/vocabulary.txt` | `%LOCALAPPDATA%\DictaFlow\vocabulary.txt` |
 | Dictation history | `~/Library/Application Support/DictaFlow/history.json` | `%LOCALAPPDATA%\DictaFlow\history.json` |
 | Recording debug artifacts | `~/Library/Application Support/DictaFlow/recordings/` | `%LOCALAPPDATA%\DictaFlow\recordings\` |
 | Logs | `~/Library/Logs/DictaFlow/app.log` | `%LOCALAPPDATA%\DictaFlow\Logs\app.log` |

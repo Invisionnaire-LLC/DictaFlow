@@ -4,11 +4,36 @@ use std::path::{Path, PathBuf};
 
 const LABEL: &str = "com.invisionnaire.dictaflow.login";
 
+/// Mac App Store builds are sandboxed and cannot install LaunchAgents.
+pub fn launch_at_login_supported() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        !is_mac_app_store_build()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+fn is_mac_app_store_build() -> bool {
+    app_bundle_path(&std::env::current_exe().unwrap_or_default())
+        .is_some_and(|app| app.join("Contents/embedded.provisionprofile").exists())
+}
+
 pub fn is_enabled() -> bool {
+    if !launch_at_login_supported() {
+        return false;
+    }
     launch_agent_path().is_some_and(|path| path.exists() && plist_points_to_current_app(&path))
 }
 
 pub fn set_enabled(enabled: bool) -> Result<()> {
+    if enabled && !launch_at_login_supported() {
+        return Err(anyhow!(
+            "Launch at login is not available in the Mac App Store build (App Sandbox)."
+        ));
+    }
     if enabled {
         enable()
     } else {
@@ -18,6 +43,14 @@ pub fn set_enabled(enabled: bool) -> Result<()> {
 
 /// Align the LaunchAgent with persisted settings and the current app location.
 pub fn reconcile(settings_enabled: bool) -> Result<()> {
+    if !launch_at_login_supported() {
+        if settings_enabled {
+            tracing::info!("launch at login: disabled in Mac App Store build; clearing setting");
+            let _ = disable();
+            let _ = crate::settings::Settings::update(|saved| saved.launch_at_login = false);
+        }
+        return Ok(());
+    }
     let path = launch_agent_path().ok_or_else(|| anyhow!("no LaunchAgents directory"))?;
     let plist_exists = path.exists();
     let plist_valid = plist_exists && plist_points_to_current_app(&path);
@@ -127,5 +160,11 @@ mod tests {
     #[test]
     fn xml_escape_escapes_special_chars() {
         assert_eq!(xml_escape("a&b<c>"), "a&amp;b&lt;c&gt;");
+    }
+
+    #[test]
+    fn launch_at_login_supported_in_dev_build() {
+        // Dev/direct-install builds do not embed an App Store provisioning profile.
+        assert!(launch_at_login_supported());
     }
 }

@@ -66,8 +66,8 @@ pub struct Hotkey {
 impl Default for Hotkey {
     fn default() -> Self {
         Self {
-            code: "F9".to_string(),
-            modifiers: Vec::new(),
+            code: "Space".to_string(),
+            modifiers: vec!["Alt".to_string()],
         }
     }
 }
@@ -116,8 +116,8 @@ pub struct Settings {
     /// Transcription backend: "local" (offline Whisper, default), "groq", or "openai".
     #[serde(default)]
     pub transcription_backend: Option<String>,
-    /// API key for the selected cloud transcription backend. Stored locally in plaintext.
-    #[serde(default)]
+    /// Legacy field — migrated to Keychain on macOS; never written on save.
+    #[serde(default, skip_serializing)]
     pub transcription_api_key: Option<String>,
     /// Optional model override for the cloud backend (provider default used when empty).
     #[serde(default)]
@@ -142,7 +142,8 @@ impl Settings {
 
     /// Persist settings under an exclusive lock (all writes must go through here).
     pub fn save(&self) -> Result<()> {
-        let replacement = self.clone();
+        let mut replacement = self.clone();
+        replacement.transcription_api_key = None;
         Self::update(|saved| *saved = replacement)
     }
 
@@ -169,6 +170,7 @@ impl Settings {
 
         let mut settings = read_settings_file(&path).unwrap_or_default();
         patch(&mut settings);
+        settings.transcription_api_key = None;
         let json = serde_json::to_string_pretty(&settings)?;
         write_atomic(&path, &json)?;
         tracing::info!("settings updated at {}", path.display());
@@ -223,4 +225,36 @@ fn settings_path() -> Option<PathBuf> {
     let dir = dirs::data_local_dir()?.join("DictaFlow");
     fs::create_dir_all(&dir).ok();
     Some(dir.join("settings.json"))
+}
+
+/// Read a legacy plaintext API key still present in settings.json (pre-Keychain).
+#[cfg(not(target_os = "macos"))]
+pub fn legacy_transcription_api_key() -> Option<String> {
+    let path = settings_path()?;
+    let settings = read_settings_file(&path).ok()?;
+    settings
+        .transcription_api_key
+        .filter(|k| !k.trim().is_empty())
+}
+
+/// Remove and return a legacy plaintext API key from settings.json.
+pub fn take_legacy_transcription_api_key() -> Option<String> {
+    let mut taken = None;
+    let _ = Settings::update(|saved| {
+        if saved.transcription_api_key.is_some() {
+            taken = saved.transcription_api_key.take();
+        }
+    });
+    taken.filter(|k| !k.trim().is_empty())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_legacy_transcription_api_key(key: &str) -> Result<()> {
+    Settings::update(|saved| {
+        saved.transcription_api_key = if key.is_empty() {
+            None
+        } else {
+            Some(key.to_string())
+        };
+    })
 }

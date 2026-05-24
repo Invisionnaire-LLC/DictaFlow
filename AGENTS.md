@@ -10,7 +10,7 @@ firma de código, permisos macOS, el bundle `.app`, o el selector de Ollama.
 App de dictado **local-first** para macOS, construida con **Tauri (Rust + WebView)**.
 Flujo de uso:
 
-1. Mantienes una hotkey global (default `Alt + Z`).
+1. Mantienes una hotkey global (default `Option + Space`).
 2. Hablas; el audio se graba con el micrófono.
 3. Se transcribe **localmente** con **Whisper** (`whisper-rs`, modelo `ggml-large-v3-turbo.bin`).
 4. Se limpia el texto: primero reglas (`cleanup/rules.rs`), luego un modelo **Ollama** local
@@ -51,16 +51,17 @@ src-tauri/
 
 ### Comandos Tauri expuestos (`generate_handler!`)
 `get_hotkey`, `set_hotkey`, `get_ollama_model`, `list_ollama_models`, `set_ollama_model`,
-`get_launch_at_login`, `set_launch_at_login`, `close_settings`, `hud_edit_start`,
+`get_launch_at_login`, `set_launch_at_login`, `launch_at_login_supported`, `close_settings`, `hud_edit_start`,
 `hud_edit_save`, `hud_edit_cancel`, `check_accessibility`, `prompt_accessibility`,
-`open_accessibility_settings`, `open_microphone_settings`.
+`open_accessibility_settings`, `open_microphone_settings`, `open_input_monitoring_settings`,
+`check_input_monitoring`, `get_whisper_model_status`.
 
 ### Settings persistidos
 `~/Library/Application Support/DictaFlow/settings.json`
 ```json
 {
   "input_device": null,
-  "hotkey": { "code": "KeyZ", "modifiers": ["Alt"] },
+  "hotkey": { "code": "Space", "modifiers": ["Alt"] },
   "hud_position": null,
   "ollama_model": "gemma3:1b",
   "launch_at_login": false

@@ -11,6 +11,7 @@ mod hud_cursor;
 mod login_item;
 mod main_thread;
 mod paste;
+mod secrets;
 mod settings;
 mod state;
 
@@ -101,6 +102,10 @@ fn parse_modifiers(mods: &[String]) -> Result<Option<Modifiers>, String> {
     Ok(Some(out))
 }
 
+fn default_dictation_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::ALT), Code::Space)
+}
+
 fn hotkey_to_shortcut(h: &Hotkey) -> Result<Shortcut, String> {
     let code = Code::from_str(&h.code).map_err(|_| format!("unknown key code: {}", h.code))?;
     let mods = parse_modifiers(&h.modifiers)?;
@@ -119,6 +124,8 @@ static TRAY_ICON_DECODED: once_cell::sync::Lazy<(Vec<u8>, u32, u32)> =
 
 static HUD_STYLE_CACHE: once_cell::sync::Lazy<Mutex<String>> =
     once_cell::sync::Lazy::new(|| Mutex::new(load_hud_style_from_disk()));
+
+static MODEL_DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
 fn load_hud_style_from_disk() -> String {
     hud_cursor::normalize_hud_style(
@@ -255,6 +262,7 @@ fn main() {
             copy_text,
             update_history_entry,
             list_dictionary,
+            add_dictionary_entry,
             delete_dictionary_entry,
             get_hud_style,
             set_hud_style,
@@ -267,6 +275,10 @@ fn main() {
             prompt_accessibility,
             open_accessibility_settings,
             open_microphone_settings,
+            open_input_monitoring_settings,
+            check_input_monitoring,
+            launch_at_login_supported,
+            get_whisper_model_status,
             get_build_info,
             get_cursor_hud_status
         ])
@@ -275,6 +287,7 @@ fn main() {
             app.set_activation_policy(ActivationPolicy::Accessory);
 
             let (audio, level_rx) = AudioController::spawn();
+            secrets::migrate_transcription_api_key_from_settings();
             let saved = settings::Settings::load();
             let ollama_model = saved
                 .ollama_model
@@ -287,7 +300,7 @@ fn main() {
             );
             let cloud = cloud_asr::CloudTranscriber::new(
                 cloud_backend,
-                saved.transcription_api_key.clone().unwrap_or_default(),
+                secrets::get_transcription_api_key(),
                 saved.transcription_model.clone().unwrap_or_default(),
             );
             tracing::info!(
@@ -308,8 +321,8 @@ fn main() {
             let shortcut = match hotkey_to_shortcut(&hotkey) {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!("saved hotkey invalid ({}), using default F9", e);
-                    Shortcut::new(None, Code::F9)
+                    tracing::warn!("saved hotkey invalid ({}), using default Option+Space", e);
+                    default_dictation_shortcut()
                 }
             };
 
@@ -418,7 +431,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let hotkey_label = app
         .try_state::<AppContext>()
         .map(|ctx| ctx.current_hotkey.lock().display())
-        .unwrap_or_else(|| "F9".to_string());
+        .unwrap_or_else(|| Hotkey::default().display());
 
     TrayIconBuilder::with_id("main")
         .icon(tray_icon_image())
@@ -597,6 +610,57 @@ fn open_microphone_settings() {
         let _ = std::process::Command::new("open")
             .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
             .spawn();
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "IOKit", kind = "framework")]
+extern "C" {
+    fn IOHIDCheckAccess(request_type: u32) -> u32;
+}
+
+#[cfg(target_os = "macos")]
+const IOHID_REQUEST_TYPE_LISTEN_EVENT: u32 = 1;
+
+#[cfg(target_os = "macos")]
+const IOHID_ACCESS_TYPE_GRANTED: u32 = 0;
+
+#[tauri::command]
+fn check_input_monitoring() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        IOHIDCheckAccess(IOHID_REQUEST_TYPE_LISTEN_EVENT) == IOHID_ACCESS_TYPE_GRANTED
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+#[tauri::command]
+fn open_input_monitoring_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+            .spawn();
+    }
+}
+
+#[tauri::command]
+fn launch_at_login_supported() -> bool {
+    login_item::launch_at_login_supported()
+}
+
+#[tauri::command]
+fn get_whisper_model_status() -> String {
+    if MODEL_DOWNLOADING.load(Ordering::Relaxed) {
+        return "downloading".to_string();
+    }
+    if asr::is_model_downloaded() {
+        "ready".to_string()
+    } else {
+        "missing".to_string()
     }
 }
 
@@ -1312,6 +1376,15 @@ async fn delete_dictionary_entry(from: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+async fn add_dictionary_entry(from: String, to: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        dictionary::add_replacement(&from, &to).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn close_history(app: AppHandle) {
     if let Some(w) = app.get_webview_window("history") {
         let _ = w.close();
@@ -1460,7 +1533,7 @@ fn get_transcription_config(app: AppHandle) -> TranscriptionConfig {
         cloud_asr::Backend::parse(saved.transcription_backend.as_deref().unwrap_or("local"));
     let transcriber = cloud_asr::CloudTranscriber::new(
         backend,
-        saved.transcription_api_key.unwrap_or_default(),
+        secrets::get_transcription_api_key(),
         saved.transcription_model.unwrap_or_default(),
     );
     TranscriptionConfig {
@@ -1501,8 +1574,10 @@ fn set_transcription_config(
 
     let mut saved = settings::Settings::load();
     saved.transcription_backend = Some(parsed.as_str().to_string());
-    saved.transcription_api_key = if key.is_empty() { None } else { Some(key) };
     saved.transcription_model = if model.is_empty() { None } else { Some(model) };
+    if let Err(e) = secrets::set_transcription_api_key(&key) {
+        tracing::warn!("could not store transcription API key: {:?}", e);
+    }
     if let Err(e) = saved.save() {
         tracing::warn!("could not persist transcription config: {:?}", e);
     }
@@ -1721,17 +1796,34 @@ fn spawn_initialization(app: AppHandle) {
 fn load_local_whisper(app: &AppHandle) {
     if !asr::is_model_downloaded() {
         tracing::info!("whisper model not found locally; downloading (~1.5 GB)");
+        MODEL_DOWNLOADING.store(true, Ordering::Relaxed);
         let app_for_progress = app.clone();
-        match asr::download_model(|done, total| {
-            if total > 0 && done % (64 * 1024 * 1024) < (1 << 16) {
-                let pct = (done as f64 / total as f64 * 100.0) as u32;
-                tracing::info!("whisper download: {}% ({} / {})", pct, done, total);
-                let _ = app_for_progress.emit("download_progress", pct);
+        let _ = app_for_progress.emit("model_download_start", ());
+        let _ = app_for_progress.emit("model_download_progress", 0u32);
+        let last_pct = std::cell::Cell::new(0u32);
+
+        let download_result = asr::download_model(|done, total| {
+            if total == 0 {
+                return;
             }
-        }) {
-            Ok(_) => tracing::info!("whisper model download complete"),
+            let pct = ((done as f64 / total as f64) * 100.0).min(100.0) as u32;
+            if pct != last_pct.get() || done == total {
+                last_pct.set(pct);
+                tracing::info!("whisper download: {}% ({} / {})", pct, done, total);
+                let _ = app_for_progress.emit("model_download_progress", pct);
+            }
+        });
+
+        MODEL_DOWNLOADING.store(false, Ordering::Relaxed);
+        match download_result {
+            Ok(_) => {
+                tracing::info!("whisper model download complete");
+                let _ = app.emit("model_download_progress", 100u32);
+                let _ = app.emit("model_download_complete", ());
+            }
             Err(e) => {
                 tracing::error!("whisper download failed: {:?}", e);
+                let _ = app.emit("model_download_failed", e.to_string());
                 return;
             }
         }

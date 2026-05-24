@@ -22,11 +22,11 @@ INFO_LOC_ID = "621554f5-1337-4989-b7f4-88b7e663f85b"
 DESCRIPTION = """DictaFlow is local-first dictation for Mac. Hold a hotkey, speak, release. Cleaned text appears at your cursor.
 
 FEATURES
-• Dictate anywhere you type with a global hotkey (hold or tap to start/stop)
+• Dictate anywhere you type with a global hotkey (default Option+Space; hold or tap to start/stop)
 • Transcribes locally with Whisper — your voice stays on your Mac by default
 • Optional cloud transcription (Groq or OpenAI) when you want speed over offline privacy
 • Language modes: auto-detect, force English or Spanish, or translate to English
-• Custom vocabulary for names, slang, and terms Whisper should recognize
+• Vocabulary: words to recognize plus auto-learned corrections
 • Cleans up punctuation, fillers, and spacing with on-device rules
 • Optional Ollama cleanup for smarter phrasing (runs locally)
 • Menu bar app with Classic, Notch, or Cursor HUD styles and live transcript preview
@@ -40,15 +40,40 @@ Built by Invisionnaire."""
 
 PROMO = "Speak naturally. DictaFlow transcribes locally, cleans up, and pastes at your cursor."
 KEYWORDS = "dictation,transcription,whisper,voice typing,speech to text,local,privacy,productivity,ollama,mac"
-WHATS_NEW = """• Refreshed app icon
-• Cursor-following HUD style for multi-monitor setups
-• Optional cloud transcription (Groq/OpenAI) and custom vocabulary
-• Language modes and auto-send after paste
-• Improved paste reliability in Electron apps like Telegram
-• Panel-based Settings with build info and learned-word dictionary"""
+WHATS_NEW = """• App Store build with tightened sandbox entitlements
+• Default hotkey Option+Space (configurable in Settings)
+• Cloud API keys stored in macOS Keychain
+• Cursor-following HUD and optional cloud transcription
+• Improved paste reliability in Electron apps like Telegram"""
 SUBTITLE = "Local dictation at your cursor"
 SUPPORT_URL = "https://github.com/Invisionnaire-LLC/DictaFlow/issues"
 MARKETING_URL = "https://github.com/Invisionnaire-LLC/DictaFlow"
+PRIVACY_POLICY_URL = "https://github.com/Invisionnaire-LLC/DictaFlow/blob/main/docs/PRIVACY-POLICY.md"
+
+
+def load_env_file() -> None:
+    env_path = Path(__file__).resolve().parent / "apple-release.env"
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+def contact_phone() -> str:
+    phone = os.environ.get("ASC_CONTACT_PHONE", "").strip()
+    if not phone:
+        print(
+            "WARNING: ASC_CONTACT_PHONE not set (add to scripts/apple-release.env). "
+            "Skipping contactPhone update in review details.",
+            file=sys.stderr,
+        )
+    return phone
 
 
 def token() -> str:
@@ -89,6 +114,8 @@ def api(method: str, path: str, body: dict | None = None) -> dict:
 
 
 def main() -> None:
+    load_env_file()
+
     api(
         "PATCH",
         f"/v1/appStoreVersionLocalizations/{VERSION_LOC_ID}",
@@ -107,7 +134,6 @@ def main() -> None:
         },
     )
     print("updated version localization (description, keywords, URLs, promo)")
-    print(f"(what's new draft for later: {WHATS_NEW[:80]}…)")
 
     api(
         "PATCH",
@@ -116,11 +142,14 @@ def main() -> None:
             "data": {
                 "type": "appInfoLocalizations",
                 "id": INFO_LOC_ID,
-                "attributes": {"subtitle": SUBTITLE},
+                "attributes": {
+                    "subtitle": SUBTITLE,
+                    "privacyPolicyUrl": PRIVACY_POLICY_URL,
+                },
             }
         },
     )
-    print(f"updated subtitle: {SUBTITLE}")
+    print(f"updated subtitle + privacy policy URL")
 
     api(
         "PATCH",
@@ -137,7 +166,7 @@ def main() -> None:
             }
         },
     )
-    print("set primary category: Productivity / Utilities")
+    print("set primary category: Productivity")
 
     api(
         "PATCH",
@@ -154,22 +183,30 @@ def main() -> None:
     )
     print("set content rights declaration")
 
+    review_attrs = {
+        "contactFirstName": "Adrian",
+        "contactLastName": "Rosario",
+        "contactEmail": "arosario@invisionnaire.com",
+                "notes": (
+                    "DictaFlow is a menu bar dictation utility. "
+                    "Grant Microphone, Accessibility, and Input Monitoring when prompted. "
+                    "Default hotkey is Option+Space; hold to dictate or tap twice to start/stop. "
+                    "First launch downloads the Whisper model (~1.5 GB, several minutes). "
+                    "Progress appears in the menu bar HUD and Settings until complete. "
+                    "For faster review testing, use Settings → Transcription → Groq with an API key. "
+                    "Local Whisper transcription is the default; cloud backends are optional in Settings. "
+                    "Cloud API keys are stored in the macOS Keychain."
+                ),
+    }
+    phone = contact_phone()
+    if phone:
+        review_attrs["contactPhone"] = phone
+
     review = api("GET", f"/v1/appStoreVersions/{VERSION_ID}/appStoreReviewDetail")
     review_body = {
         "data": {
             "type": "appStoreReviewDetails",
-            "attributes": {
-                "contactFirstName": "Adrian",
-                "contactLastName": "Rosario",
-                "contactEmail": "arosario@invisionnaire.com",
-                "contactPhone": "+1 312 555 0100",
-                "notes": (
-                    "DictaFlow is a menu bar dictation utility. "
-                    "Grant Microphone, Accessibility, and Input Monitoring when prompted. "
-                    "Default hotkey is Option+Z (Alt+Z); hold to dictate or tap twice to start/stop. "
-                    "Local Whisper transcription is the default; cloud backends are optional in Settings."
-                ),
-            },
+            "attributes": review_attrs,
             "relationships": {
                 "appStoreVersion": {
                     "data": {"type": "appStoreVersions", "id": VERSION_ID}
@@ -189,11 +226,13 @@ def main() -> None:
         print("created app review contact details")
 
     print("\nDone. Still required manually in App Store Connect:")
-    print("  • Upload a Mac build (.pkg) and attach it to version 1.0")
+    print("  • Upload build 4 (.pkg) and attach it to version 1.0.0")
     print("  • Screenshots (at least one Mac screenshot)")
     print("  • App Privacy questionnaire")
     print("  • Age rating questionnaire")
     print("  • Pricing (free/paid)")
+    if not phone:
+        print("  • Set ASC_CONTACT_PHONE in scripts/apple-release.env and re-run for review phone")
 
 
 if __name__ == "__main__":

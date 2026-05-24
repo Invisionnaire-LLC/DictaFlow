@@ -7,6 +7,10 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>DictaFlow needs microphone access to transcribe your dictation locally.</string>
+	<string>DictaFlow records your voice only while you hold the dictation hotkey. Audio is processed on your Mac unless you enable a cloud backend in Settings.</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Invisionnaire</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

@@ -241,6 +241,21 @@ fn cap_learned_pairs(pairs: Vec<(String, String)>) -> Vec<(String, String)> {
     pairs
 }
 
+pub fn add_replacement(from: &str, to: &str) -> Result<()> {
+    let from = from.trim();
+    let to = to.trim();
+    if from.is_empty() || to.is_empty() {
+        return Err(anyhow!("both heard and wanted text are required"));
+    }
+    if from.eq_ignore_ascii_case(to) {
+        return Err(anyhow!("heard and wanted text must differ"));
+    }
+    let mut dict = DICT.lock();
+    dict.upsert_replacement(from.to_string(), to.to_string());
+    dict.save()?;
+    Ok(())
+}
+
 pub fn list_replacements() -> Vec<Replacement> {
     DICT.lock().replacements.clone()
 }
@@ -459,6 +474,13 @@ fn dictionary_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_replacement_rejects_empty_or_identical() {
+        assert!(add_replacement("", "Claude").is_err());
+        assert!(add_replacement("cloud", "").is_err());
+        assert!(add_replacement("Claude", "Claude").is_err());
+    }
 
     #[test]
     fn learns_cloud_to_claude_as_phrase_not_single_word() {

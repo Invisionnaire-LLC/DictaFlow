@@ -8,7 +8,7 @@ APP_ID="6772598366"
 APP_SIGN_ID="3rd Party Mac Developer Application: Adrian Rosario (W26D33D5D5)"
 INSTALLER_SIGN_ID="3rd Party Mac Developer Installer: Adrian Rosario (W26D33D5D5)"
 MARKETING_VERSION="1.0.0"
-BUILD_NUMBER="${BUILD_NUMBER:-3}"
+BUILD_NUMBER="${BUILD_NUMBER:-4}"
 
 if [[ ! -f "$SIGNING/DictaFlow.provisionprofile" ]]; then
   echo "Missing provisioning profile. Run ./scripts/setup-appstore-signing.sh first."

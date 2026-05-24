@@ -1,6 +1,6 @@
 [package]
 name = "dictaflow"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local-first dictation tool"
 authors = ["Invisionnaire"]
 edition = "2021"
@@ -41,6 +41,7 @@ cocoa = "0.26"
 objc = "0.2"
 core-foundation = "0.10"
 core-graphics = { version = "0.24", features = ["elcapitan"] }
+security-framework = "3"
 whisper-rs = { version = "0.16", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -180,6 +180,13 @@
 
     .field:last-child { margin-bottom: 0; }
 
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
     .field label,
     .field .field-label {
       display: block;
@@ -399,6 +406,26 @@
     .msg.ok { color: var(--success); }
     .msg.err { color: var(--error); }
 
+    .progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--border-soft);
+      overflow: hidden;
+      margin: 10px 0 6px;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #2196f3, #64b5f6);
+      transition: width 0.25s ease;
+    }
+    .download-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0;
+    }
+
     .dict-list {
       border: 1px solid var(--border-soft);
       border-radius: var(--radius-sm);
@@ -485,6 +512,17 @@
           <p>Choose the global hotkey. Hold to talk, or tap twice to start and stop.</p>
         </header>
 
+        <div id="modelDownloadCard" class="card" hidden>
+          <div class="card-title">Downloading speech model</div>
+          <p class="hint" style="margin-top:0;margin-bottom:8px">
+            Whisper large-v3-turbo (~1.5 GB) downloads once on first launch. Dictation works after this finishes.
+          </p>
+          <div class="progress-track" aria-hidden="true">
+            <div id="modelDownloadBar" class="progress-fill"></div>
+          </div>
+          <p id="modelDownloadMeta" class="download-meta">Starting…</p>
+        </div>
+
         <div class="card">
           <div class="card-title">Hotkey</div>
           <div class="field">
@@ -554,27 +592,6 @@
           <div id="asrMsg" class="msg"></div>
           <div class="btn-row">
             <button id="asrSave" class="primary" disabled>Save</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title" style="display:flex;align-items:center;gap:10px">
-            <img src="petlaptop.png" alt="" width="28" height="28" style="image-rendering:pixelated;border-radius:6px" />
-            Custom words
-          </div>
-          <p class="hint" style="margin-top:0;margin-bottom:12px">Names, slang, and terms Whisper should recognize. Separate with commas.</p>
-
-          <div class="field">
-            <textarea id="vocab" class="control" rows="4" spellcheck="false" placeholder="e.g. McKenzie, Anthropic, CUDA"></textarea>
-          </div>
-
-          <p class="hint">
-            These bias transcription toward names and terms you add. Works with local and cloud backends.
-          </p>
-
-          <div id="vocabMsg" class="msg"></div>
-          <div class="btn-row">
-            <button id="vocabSave" class="primary" disabled>Save words</button>
           </div>
         </div>
       </section>
@@ -653,11 +670,41 @@
       <section id="panel-vocabulary" class="panel" aria-labelledby="nav-vocabulary">
         <header class="panel-head">
           <h2>Vocabulary</h2>
-          <p>Words DictaFlow learned when you corrected pasted text. They apply on future dictations.</p>
+          <p>Teach DictaFlow names and terms to recognize, and corrections when Whisper gets them wrong.</p>
         </header>
 
         <div class="card">
-          <div class="card-title">Learned replacements</div>
+          <div class="card-title">Words to recognize</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">
+            Names, brands, slang — comma-separated. Biases transcription before you dictate them.
+          </p>
+          <div class="field">
+            <textarea id="vocab" class="control" rows="3" spellcheck="false" placeholder="e.g. McKenzie, Anthropic, CUDA"></textarea>
+          </div>
+          <div id="vocabMsg" class="msg"></div>
+          <div class="btn-row">
+            <button id="vocabSave" class="primary" disabled>Save words</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Corrections</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">
+            When Whisper hears one thing but you want another. Applied after transcription and fed back into future prompts.
+          </p>
+          <div class="field-row">
+            <div class="field">
+              <label for="corrFrom">Heard</label>
+              <input id="corrFrom" class="control" type="text" spellcheck="false" placeholder="e.g. use cloud" />
+            </div>
+            <div class="field">
+              <label for="corrTo">Wanted</label>
+              <input id="corrTo" class="control" type="text" spellcheck="false" placeholder="e.g. use Claude" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="corrAdd" type="button">Add correction</button>
+          </div>
           <div id="dictList" class="dict-list">
             <div class="dict-empty">Loading…</div>
           </div>
@@ -666,8 +713,8 @@
           </div>
           <div id="dictMsg" class="msg"></div>
           <p class="hint">
-            Fix a word after dictating, or use History → Save and learn. DictaFlow picks up the correction automatically.
-            Common words like <em>cloud</em> are learned as phrases (e.g. “use cloud” → “use Claude”) so weather talk stays intact.
+            Corrections are learned automatically when you fix pasted text, or add them here manually.
+            Ambiguous words like <em>cloud</em> are stored as phrases (e.g. “use cloud” → “use Claude”) so weather talk stays intact.
           </p>
         </div>
       </section>
@@ -680,13 +727,16 @@
 
         <div class="card">
           <div class="card-title">Startup</div>
-          <div class="toggle-row">
+          <div id="launchAtLoginRow" class="toggle-row">
             <input id="launchAtLogin" type="checkbox" />
             <div class="toggle-copy">
               <strong>Open DictaFlow at login</strong>
               <span>Keep the menu bar agent ready without launching the app manually.</span>
             </div>
           </div>
+          <p id="masLoginNote" class="hint" hidden>
+            Launch at login is not available in the Mac App Store build because of App Sandbox restrictions.
+          </p>
           <div id="loginMsg" class="msg"></div>
           <p class="hint build-info">Build <span id="buildVersion">…</span> · <span id="buildHash">…</span></p>
         </div>
@@ -695,7 +745,7 @@
       <section id="panel-permissions" class="panel" aria-labelledby="nav-permissions">
         <header class="panel-head">
           <h2>Permissions</h2>
-          <p>DictaFlow needs Accessibility to paste at your cursor and Microphone to record.</p>
+          <p>DictaFlow needs Microphone, Accessibility, and Input Monitoring for dictation.</p>
         </header>
 
         <div class="card">
@@ -704,14 +754,19 @@
             <span class="field-label">Accessibility</span>
             <div id="axStatus" class="badge pending">Checking…</div>
           </div>
+          <div class="field">
+            <span class="field-label">Input Monitoring</span>
+            <div id="imStatus" class="badge pending">Checking…</div>
+          </div>
           <div class="btn-row">
             <button id="axRequest" class="primary" type="button">Request Accessibility</button>
             <button id="axRecheck" type="button">Re-check</button>
             <button id="axOpen" type="button">Accessibility Settings</button>
+            <button id="imOpen" type="button">Input Monitoring Settings</button>
             <button id="micOpen" type="button">Microphone Settings</button>
           </div>
           <p class="hint">
-            First time: click <b>Request Accessibility</b>, then toggle <b>dictaflow</b> on in System Settings. If paste fails after a rebuild, toggle the permission off and on again.
+            First time: enable all three in System Settings. Click <b>Request Accessibility</b>, then toggle <b>DictaFlow</b> on for Accessibility and Input Monitoring. Microphone is prompted when you first dictate.
           </p>
         </div>
       </section>
@@ -722,731 +777,6 @@
     </footer>
   </div>
 
-  <script>
-    (async () => {
-      for (let i = 0; i < 50; i++) {
-        if (window.__TAURI__?.core?.invoke) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
-      if (!window.__TAURI__?.core?.invoke) return;
-
-    const invoke = window.__TAURI__.core.invoke;
-
-    const navButtons = document.querySelectorAll(".nav-btn");
-    const panels = document.querySelectorAll(".panel");
-
-    navButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const id = btn.dataset.panel;
-        navButtons.forEach((b) => b.removeAttribute("aria-current"));
-        btn.setAttribute("aria-current", "page");
-        panels.forEach((panel) => {
-          panel.classList.toggle("active", panel.id === `panel-${id}`);
-        });
-        if (id === "vocabulary") loadDictionary();
-      });
-    });
-
-    const currentEl = document.getElementById("current");
-    const captureEl = document.getElementById("capture");
-    const hkMsgEl = document.getElementById("hkMsg");
-    const saveBtn = document.getElementById("save");
-    const closeBtn = document.getElementById("close");
-    const ollamaModelEl = document.getElementById("ollamaModel");
-    const ollamaToggleEl = document.getElementById("ollamaToggle");
-    const ollamaListEl = document.getElementById("ollamaList");
-    const ollamaMsgEl = document.getElementById("ollamaMsg");
-    const ollamaSaveBtn = document.getElementById("ollamaSave");
-    const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
-    const launchAtLoginEl = document.getElementById("launchAtLogin");
-    const loginMsgEl = document.getElementById("loginMsg");
-
-    const hudStyleEl = document.getElementById("hudStyle");
-    const hudStyleMsgEl = document.getElementById("hudStyleMsg");
-    const hudAlwaysOnTopEl = document.getElementById("hudAlwaysOnTop");
-    const liveTranscriptEl = document.getElementById("liveTranscript");
-    const resetHudPositionBtn = document.getElementById("resetHudPosition");
-
-    const dictListEl = document.getElementById("dictList");
-    const dictMsgEl = document.getElementById("dictMsg");
-    const dictRefreshBtn = document.getElementById("dictRefresh");
-
-    let pending = null;
-    let currentOllamaModel = "";
-
-    function displayHotkey(h) {
-      if (!h || !h.code) return "-";
-      const parts = (h.modifiers || []).slice();
-      parts.push(h.code);
-      return parts.join(" + ");
-    }
-
-    async function loadCurrent() {
-      try {
-        const h = await invoke("get_hotkey");
-        currentEl.textContent = displayHotkey(h);
-      } catch (e) {
-        currentEl.textContent = "(error)";
-        console.error(e);
-      }
-    }
-    loadCurrent();
-
-    function formatBytes(bytes) {
-      if (!bytes) return "";
-      const units = ["B", "KB", "MB", "GB"];
-      let value = bytes;
-      let unit = 0;
-      while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-      }
-      return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
-    }
-
-    function setOllamaMessage(text, kind = "") {
-      ollamaMsgEl.textContent = text;
-      ollamaMsgEl.className = kind ? `msg ${kind}` : "msg";
-    }
-
-    let comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
-
-    function renderComboList() {
-      const selected = ollamaModelEl.value.trim();
-      ollamaListEl.innerHTML = "";
-      for (const item of comboItems) {
-        const row = document.createElement("div");
-        row.className = "combo-item";
-        row.setAttribute("role", "option");
-        if (item.value === selected) row.classList.add("selected");
-        const name = document.createElement("span");
-        name.textContent = item.value;
-        row.appendChild(name);
-        if (item.meta) {
-          const meta = document.createElement("span");
-          meta.className = "meta";
-          meta.textContent = item.meta;
-          row.appendChild(meta);
-        }
-        row.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          ollamaModelEl.value = item.value;
-          onOllamaInput();
-          closeComboList();
-          ollamaModelEl.focus();
-        });
-        ollamaListEl.appendChild(row);
-      }
-    }
-
-    function openComboList() {
-      renderComboList();
-      ollamaListEl.classList.add("open");
-      ollamaToggleEl.setAttribute("aria-expanded", "true");
-    }
-
-    function closeComboList() {
-      ollamaListEl.classList.remove("open");
-      ollamaToggleEl.setAttribute("aria-expanded", "false");
-    }
-
-    async function loadOllamaModels() {
-      ollamaModelEl.disabled = true;
-      ollamaSaveBtn.disabled = true;
-      ollamaModelEl.placeholder = "Loading…";
-      setOllamaMessage("");
-      let current = "";
-      try {
-        const [cur, models] = await Promise.all([
-          invoke("get_ollama_model"),
-          invoke("list_ollama_models"),
-        ]);
-        current = cur;
-        const names = new Set(["gemma3:1b"]);
-        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
-        for (const model of models) {
-          if (names.has(model.name)) continue;
-          names.add(model.name);
-          comboItems.push({ value: model.name, meta: formatBytes(model.size) });
-        }
-        if (current && !names.has(current)) {
-          setOllamaMessage(`Current: ${current} (manual model)`, "");
-        } else if (!models.length) {
-          setOllamaMessage("Using DictaFlow default. You can also type any Ollama model name manually.", "ok");
-        } else {
-          setOllamaMessage(`Current: ${current}`, "ok");
-        }
-      } catch (err) {
-        current = await invoke("get_ollama_model").catch(() => "");
-        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
-        setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
-      }
-      currentOllamaModel = current;
-      ollamaModelEl.value = current;
-      ollamaModelEl.placeholder = "gemma3:1b";
-      ollamaModelEl.disabled = false;
-      ollamaSaveBtn.disabled = true;
-      renderComboList();
-    }
-    loadOllamaModels();
-
-    function setLoginMessage(text, kind = "") {
-      loginMsgEl.textContent = text;
-      loginMsgEl.className = kind ? `msg ${kind}` : "msg";
-    }
-
-    async function loadLaunchAtLogin() {
-      try {
-        launchAtLoginEl.checked = await invoke("get_launch_at_login");
-      } catch (err) {
-        setLoginMessage(String(err), "err");
-      }
-    }
-    loadLaunchAtLogin();
-
-    function setDictMessage(text, kind = "") {
-      dictMsgEl.textContent = text;
-      dictMsgEl.className = kind ? `msg ${kind}` : "msg";
-    }
-
-    async function loadDictionary() {
-      dictListEl.innerHTML = '<div class="dict-empty">Loading…</div>';
-      setDictMessage("");
-      try {
-        const items = await invoke("list_dictionary");
-        if (!items.length) {
-          dictListEl.innerHTML = '<div class="dict-empty">No learned words yet.<br>Correct pasted text and DictaFlow will remember it.</div>';
-          return;
-        }
-        dictListEl.innerHTML = "";
-        for (const item of items) {
-          const row = document.createElement("div");
-          row.className = "dict-item";
-          const pair = document.createElement("div");
-          pair.className = "dict-pair";
-          pair.innerHTML = `<span class="from">${escapeHtml(item.from)}</span><span class="arrow">→</span><span class="to">${escapeHtml(item.to)}</span>`;
-          const del = document.createElement("button");
-          del.type = "button";
-          del.className = "dict-delete";
-          del.textContent = "Remove";
-          del.addEventListener("click", async () => {
-            del.disabled = true;
-            row.remove();
-            try {
-              await invoke("delete_dictionary_entry", { from: item.from });
-              setDictMessage(`Removed ${item.from}.`, "ok");
-              if (!dictListEl.childElementCount) {
-                dictListEl.innerHTML = '<div class="dict-empty">No learned words yet.<br>Correct pasted text and DictaFlow will remember it.</div>';
-              }
-            } catch (err) {
-              setDictMessage(String(err), "err");
-              await loadDictionary();
-            }
-          });
-          row.appendChild(pair);
-          row.appendChild(del);
-          dictListEl.appendChild(row);
-        }
-      } catch (err) {
-        dictListEl.innerHTML = '<div class="dict-empty">Could not load dictionary.</div>';
-        setDictMessage(String(err), "err");
-      }
-    }
-
-    function escapeHtml(s) {
-      return String(s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    }
-
-    dictRefreshBtn.addEventListener("click", loadDictionary);
-
-    const MODIFIER_CODES = new Set([
-      "ControlLeft", "ControlRight",
-      "ShiftLeft", "ShiftRight",
-      "AltLeft", "AltRight",
-      "MetaLeft", "MetaRight",
-    ]);
-
-    function collectModifiers(e) {
-      const out = [];
-      if (e.ctrlKey) out.push("Control");
-      if (e.altKey) out.push("Alt");
-      if (e.shiftKey) out.push("Shift");
-      if (e.metaKey) out.push("Meta");
-      return out;
-    }
-
-    function onKeyDown(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (MODIFIER_CODES.has(e.code)) {
-        const mods = collectModifiers(e);
-        captureEl.textContent = mods.length ? mods.join(" + ") + " + …" : "…";
-        return;
-      }
-      const modifiers = collectModifiers(e);
-      pending = { code: e.code, modifiers };
-      captureEl.textContent = displayHotkey(pending);
-      captureEl.classList.remove("recording");
-      saveBtn.disabled = false;
-      hkMsgEl.textContent = "";
-      hkMsgEl.className = "msg";
-      captureEl.blur();
-    }
-
-    captureEl.addEventListener("focus", () => {
-      captureEl.classList.add("recording");
-      captureEl.textContent = "Press keys…";
-    });
-    captureEl.addEventListener("blur", () => {
-      captureEl.classList.remove("recording");
-      if (!pending) captureEl.textContent = "Click here, then press keys…";
-    });
-    captureEl.addEventListener("click", () => captureEl.focus());
-    captureEl.addEventListener("keydown", onKeyDown);
-
-    saveBtn.addEventListener("click", async () => {
-      if (!pending) return;
-      saveBtn.disabled = true;
-      hkMsgEl.textContent = "";
-      hkMsgEl.className = "msg";
-      try {
-        const saved = await invoke("set_hotkey", { hotkey: pending });
-        currentEl.textContent = displayHotkey(saved);
-        hkMsgEl.textContent = "Saved.";
-        hkMsgEl.className = "msg ok";
-        pending = null;
-        captureEl.textContent = "Click here, then press keys…";
-        saveBtn.disabled = true;
-      } catch (err) {
-        hkMsgEl.textContent = String(err);
-        hkMsgEl.className = "msg err";
-        saveBtn.disabled = false;
-      }
-    });
-
-    function onOllamaInput() {
-      const value = ollamaModelEl.value.trim();
-      ollamaSaveBtn.disabled = value === currentOllamaModel || !value;
-      setOllamaMessage(
-        value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
-        value === currentOllamaModel ? "ok" : ""
-      );
-    }
-    ollamaModelEl.addEventListener("input", onOllamaInput);
-    ollamaModelEl.addEventListener("focus", openComboList);
-    ollamaToggleEl.addEventListener("click", (e) => {
-      e.preventDefault();
-      if (ollamaListEl.classList.contains("open")) {
-        closeComboList();
-      } else {
-        openComboList();
-        ollamaModelEl.focus();
-      }
-    });
-    document.addEventListener("click", (e) => {
-      if (!e.target.closest(".combo-wrap")) closeComboList();
-    });
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeComboList();
-    });
-
-    ollamaSaveBtn.addEventListener("click", async () => {
-      ollamaSaveBtn.disabled = true;
-      setOllamaMessage("");
-      try {
-        const saved = await invoke("set_ollama_model", { model: ollamaModelEl.value.trim() });
-        currentOllamaModel = saved;
-        ollamaModelEl.value = saved;
-        setOllamaMessage(`Saved: ${saved}`, "ok");
-      } catch (err) {
-        setOllamaMessage(String(err), "err");
-        ollamaSaveBtn.disabled = false;
-      }
-    });
-
-    ollamaRefreshBtn.addEventListener("click", loadOllamaModels);
-
-    launchAtLoginEl.addEventListener("change", async () => {
-      launchAtLoginEl.disabled = true;
-      setLoginMessage("");
-      try {
-        const enabled = await invoke("set_launch_at_login", { enabled: launchAtLoginEl.checked });
-        launchAtLoginEl.checked = enabled;
-        setLoginMessage(enabled ? "Enabled." : "Disabled.", "ok");
-      } catch (err) {
-        launchAtLoginEl.checked = !launchAtLoginEl.checked;
-        setLoginMessage(String(err), "err");
-      } finally {
-        launchAtLoginEl.disabled = false;
-      }
-    });
-
-    closeBtn.addEventListener("click", () => {
-      invoke("close_settings").catch(() => {});
-    });
-
-    const axStatusEl = document.getElementById("axStatus");
-    async function refreshAx() {
-      axStatusEl.textContent = "Checking…";
-      axStatusEl.className = "badge pending";
-      try {
-        const granted = await invoke("check_accessibility");
-        if (granted) {
-          axStatusEl.textContent = "Granted";
-          axStatusEl.className = "badge ok";
-        } else {
-          axStatusEl.textContent = "Not granted";
-          axStatusEl.className = "badge err";
-        }
-      } catch (e) {
-        axStatusEl.textContent = "Error checking";
-        axStatusEl.className = "badge err";
-      }
-    }
-    refreshAx();
-
-    document.getElementById("axRequest").addEventListener("click", async () => {
-      try {
-        await invoke("prompt_accessibility");
-        setTimeout(refreshAx, 500);
-      } catch (e) {
-        console.error(e);
-      }
-    });
-    document.getElementById("axRecheck").addEventListener("click", refreshAx);
-    document.getElementById("axOpen").addEventListener("click", () => {
-      invoke("open_accessibility_settings").catch(() => {});
-    });
-    document.getElementById("micOpen").addEventListener("click", () => {
-      invoke("open_microphone_settings").catch(() => {});
-    });
-
-    async function loadHudStyle() {
-      try {
-        const [style, alwaysOnTop, liveTranscript] = await Promise.all([
-          invoke("get_hud_style"),
-          invoke("get_hud_always_on_top"),
-          invoke("get_live_transcript"),
-        ]);
-        hudStyleEl.value = style;
-        hudAlwaysOnTopEl.checked = alwaysOnTop;
-        liveTranscriptEl.checked = liveTranscript;
-        if (typeof refreshCursorHudStatus === "function") {
-          refreshCursorHudStatus();
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    loadHudStyle();
-
-    hudAlwaysOnTopEl.addEventListener("change", async () => {
-      hudStyleMsgEl.textContent = "";
-      hudStyleMsgEl.className = "msg";
-      try {
-        const enabled = await invoke("set_hud_always_on_top", { enabled: hudAlwaysOnTopEl.checked });
-        hudAlwaysOnTopEl.checked = enabled;
-        hudStyleMsgEl.textContent = enabled
-          ? "HUD stays above other windows."
-          : "HUD only floats up while dictating.";
-        hudStyleMsgEl.className = "msg ok";
-      } catch (err) {
-        hudStyleMsgEl.textContent = String(err);
-        hudStyleMsgEl.className = "msg err";
-      }
-    });
-
-    resetHudPositionBtn.addEventListener("click", async () => {
-      hudStyleMsgEl.textContent = "";
-      hudStyleMsgEl.className = "msg";
-      resetHudPositionBtn.disabled = true;
-      try {
-        await invoke("reset_hud_position");
-        hudStyleMsgEl.textContent = "Pill moved to default position.";
-        hudStyleMsgEl.className = "msg ok";
-      } catch (err) {
-        hudStyleMsgEl.textContent = String(err);
-        hudStyleMsgEl.className = "msg err";
-      } finally {
-        resetHudPositionBtn.disabled = false;
-      }
-    });
-
-    liveTranscriptEl.addEventListener("change", async () => {
-      hudStyleMsgEl.textContent = "";
-      hudStyleMsgEl.className = "msg";
-      try {
-        const enabled = await invoke("set_live_transcript", { enabled: liveTranscriptEl.checked });
-        liveTranscriptEl.checked = enabled;
-        hudStyleMsgEl.textContent = enabled ? "Live transcript on." : "Live transcript off.";
-        hudStyleMsgEl.className = "msg ok";
-      } catch (err) {
-        hudStyleMsgEl.textContent = String(err);
-        hudStyleMsgEl.className = "msg err";
-      }
-    });
-
-    hudStyleEl.addEventListener("change", async () => {
-      hudStyleMsgEl.textContent = "";
-      hudStyleMsgEl.className = "msg";
-      try {
-        const saved = await invoke("set_hud_style", { style: hudStyleEl.value });
-        hudStyleEl.value = saved;
-        hudStyleMsgEl.textContent = saved === "notch"
-          ? "Notch style."
-          : saved === "cursor"
-            ? "Cursor style."
-            : "Classic style.";
-        hudStyleMsgEl.className = "msg ok";
-        refreshCursorHudStatus();
-      } catch (err) {
-        hudStyleMsgEl.textContent = String(err);
-        hudStyleMsgEl.className = "msg err";
-      }
-    });
-
-    // --- Transcription backend ---
-
-    const asrLanguageEl = document.getElementById("asrLanguage");
-    const asrBackendEl = document.getElementById("asrBackend");
-    const asrCloudFieldsEl = document.getElementById("asrCloudFields");
-    const asrApiKeyEl = document.getElementById("asrApiKey");
-    const asrModelEl = document.getElementById("asrModel");
-    const asrHintEl = document.getElementById("asrHint");
-    const asrMsgEl = document.getElementById("asrMsg");
-    const asrSaveBtn = document.getElementById("asrSave");
-    const autoSubmitEl = document.getElementById("autoSubmit");
-
-    let asrCurrent = { backend: "local", model: "", api_key: "" };
-
-    const ASR_HINTS = {
-      groq: "Get a key at console.groq.com. Default model: whisper-large-v3.",
-      openai: "Get a key at platform.openai.com. Default model: gpt-4o-transcribe.",
-    };
-    const ASR_MODELS = {
-      groq: ["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"],
-      openai: ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
-    };
-
-    function setAsrMessage(text, kind = "") {
-      asrMsgEl.textContent = text;
-      asrMsgEl.className = kind ? `msg ${kind}` : "msg";
-    }
-
-    function asrIsCloud() {
-      return asrBackendEl.value !== "local";
-    }
-
-    function populateAsrModels(provider, selected) {
-      asrModelEl.innerHTML = "";
-      const list = ASR_MODELS[provider] || [];
-      for (const m of list) {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.textContent = m;
-        asrModelEl.appendChild(opt);
-      }
-      asrModelEl.value = selected && list.includes(selected) ? selected : (list[0] || "");
-    }
-
-    function asrDirty() {
-      const model = asrIsCloud() ? asrModelEl.value : "";
-      return (
-        asrBackendEl.value !== asrCurrent.backend ||
-        model !== (asrCurrent.model || "") ||
-        asrApiKeyEl.value.trim() !== (asrCurrent.api_key || "")
-      );
-    }
-
-    function updateAsrSaveState() {
-      const needsKey = asrIsCloud() && !asrApiKeyEl.value.trim();
-      asrSaveBtn.disabled = needsKey || !asrDirty();
-    }
-
-    function refreshAsrFields() {
-      const cloud = asrIsCloud();
-      asrCloudFieldsEl.style.display = cloud ? "block" : "none";
-      if (cloud) {
-        populateAsrModels(asrBackendEl.value, asrModelEl.value);
-        asrHintEl.textContent = ASR_HINTS[asrBackendEl.value] || "";
-      }
-      updateAsrSaveState();
-    }
-
-    async function loadAsrConfig() {
-      try {
-        const cfg = await invoke("get_transcription_config");
-        const provider = cfg.backend === "local" ? "groq" : cfg.backend;
-        populateAsrModels(provider, cfg.model || cfg.resolved_model);
-        asrBackendEl.value = cfg.backend;
-        asrApiKeyEl.value = cfg.api_key || "";
-        asrCurrent = {
-          backend: cfg.backend,
-          model: cfg.backend === "local" ? "" : asrModelEl.value,
-          api_key: cfg.api_key || "",
-        };
-        refreshAsrFields();
-      } catch (err) {
-        setAsrMessage(String(err), "err");
-      }
-    }
-    loadAsrConfig();
-
-    asrBackendEl.addEventListener("change", refreshAsrFields);
-    asrApiKeyEl.addEventListener("input", updateAsrSaveState);
-    asrModelEl.addEventListener("change", updateAsrSaveState);
-
-    asrSaveBtn.addEventListener("click", async () => {
-      asrSaveBtn.disabled = true;
-      setAsrMessage("Saving…");
-      const model = asrIsCloud() ? asrModelEl.value : "";
-      try {
-        const backend = await invoke("set_transcription_config", {
-          backend: asrBackendEl.value,
-          apiKey: asrApiKeyEl.value.trim(),
-          model,
-        });
-        asrCurrent = { backend, model, api_key: asrApiKeyEl.value.trim() };
-        setAsrMessage(
-          backend === "local"
-            ? "Using local Whisper (offline)."
-            : `Using ${backend} API. Audio will be sent to the cloud on each dictation.`,
-          "ok"
-        );
-        updateAsrSaveState();
-      } catch (err) {
-        setAsrMessage(String(err), "err");
-        updateAsrSaveState();
-      }
-    });
-
-    // Language (applies to local + cloud, saves instantly)
-    async function loadAsrLanguage() {
-      try {
-        asrLanguageEl.value = await invoke("get_transcription_language");
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    loadAsrLanguage();
-    asrLanguageEl.addEventListener("change", async () => {
-      try {
-        const saved = await invoke("set_transcription_language", { language: asrLanguageEl.value });
-        asrLanguageEl.value = saved;
-        setAsrMessage("Language updated.", "ok");
-      } catch (err) {
-        setAsrMessage(String(err), "err");
-      }
-    });
-
-    // Auto-submit (press Enter after paste)
-    async function loadAutoSubmit() {
-      try {
-        autoSubmitEl.checked = await invoke("get_auto_submit");
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    loadAutoSubmit();
-    autoSubmitEl.addEventListener("change", async () => {
-      try {
-        const enabled = await invoke("set_auto_submit", { enabled: autoSubmitEl.checked });
-        autoSubmitEl.checked = enabled;
-        setAsrMessage(enabled ? "Auto-send on: Enter is pressed after paste." : "Auto-send off.", "ok");
-      } catch (err) {
-        autoSubmitEl.checked = !autoSubmitEl.checked;
-        setAsrMessage(String(err), "err");
-      }
-    });
-
-    // --- Custom words (vocabulary) ---
-
-    const vocabEl = document.getElementById("vocab");
-    const vocabMsgEl = document.getElementById("vocabMsg");
-    const vocabSaveBtn = document.getElementById("vocabSave");
-    let vocabCurrent = "";
-
-    async function loadVocab() {
-      try {
-        vocabCurrent = await invoke("get_vocabulary");
-        vocabEl.value = vocabCurrent;
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    loadVocab();
-
-    vocabEl.addEventListener("input", () => {
-      vocabSaveBtn.disabled = vocabEl.value.trim() === vocabCurrent.trim();
-    });
-
-    vocabSaveBtn.addEventListener("click", async () => {
-      vocabSaveBtn.disabled = true;
-      vocabMsgEl.textContent = "";
-      vocabMsgEl.className = "msg";
-      try {
-        const saved = await invoke("set_vocabulary", { words: vocabEl.value });
-        vocabCurrent = saved;
-        vocabEl.value = saved;
-        vocabMsgEl.textContent = "Saved.";
-        vocabMsgEl.className = "msg ok";
-      } catch (err) {
-        vocabMsgEl.textContent = String(err);
-        vocabMsgEl.className = "msg err";
-        vocabSaveBtn.disabled = false;
-      }
-    });
-
-    async function refreshCursorHudStatus() {
-      if (!cursorHudStatusEl) return;
-      const style = hudStyleEl.value;
-      if (style !== "cursor") {
-        cursorHudStatusEl.hidden = true;
-        return;
-      }
-      try {
-        const status = await invoke("get_cursor_hud_status");
-        cursorHudStatusEl.hidden = false;
-        cursorHudStatusEl.textContent =
-          status === "ready"
-            ? "Cursor tracking: ready"
-            : "Cursor tracking: unavailable — pill may appear on the wrong screen";
-      } catch {
-        cursorHudStatusEl.hidden = true;
-      }
-    }
-
-    async function loadBuildInfo() {
-      try {
-        const info = await invoke("get_build_info");
-        if (buildVersionEl) buildVersionEl.textContent = info.version;
-        if (buildHashEl) buildHashEl.textContent = info.git_hash;
-      } catch {
-        if (buildVersionEl) buildVersionEl.textContent = "?";
-        if (buildHashEl) buildHashEl.textContent = "?";
-      }
-    }
-
-    const cursorHudStatusEl = document.getElementById("cursorHudStatus");
-    const buildVersionEl = document.getElementById("buildVersion");
-    const buildHashEl = document.getElementById("buildHash");
-
-    loadBuildInfo();
-    refreshCursorHudStatus();
-
-    if (window.__TAURI__?.event?.listen) {
-      window.__TAURI__.event.listen("word_learned", () => {
-        const vocabPanel = document.getElementById("panel-vocabulary");
-        if (vocabPanel && vocabPanel.classList.contains("active")) {
-          loadDictionary();
-        }
-      });
-    }
-    })();
-  </script>
+  <script src="settings.js"></script>
 </body>
 </html>

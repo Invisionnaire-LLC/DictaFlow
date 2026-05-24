@@ -243,6 +243,28 @@
     body[data-state="processing"][data-style="classic"] #bars { display: none; }
     body[data-state="processing"][data-style="cursor"] #bars { display: none; }
     body[data-style="notch"] #bars { display: none !important; }
+
+    #download-label {
+      display: none;
+      flex: 0 1 auto;
+      order: 1;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--fg-processing);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 96px;
+    }
+    body[data-downloading="on"] #download-label { display: block; }
+    body[data-downloading="on"] #bars { display: none !important; }
+    body[data-downloading="on"] #mic { opacity: 0.45; }
+    body[data-downloading="on"][data-layout="compact"] .pill {
+      width: var(--pill-expanded-w);
+      padding: 0 8px;
+    }
+
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
@@ -256,6 +278,7 @@
           <span class="learn-toast-detail"></span>
         </div>
       </div>
+      <div id="download-label" aria-live="polite">DL 0%</div>
       <div id="preview" class="empty"><span>Listening…</span></div>
       <div id="bars">
         <div class="bar" style="height: 4px"></div>
@@ -271,146 +294,6 @@
     </div>
   </div>
 
-  <script>
-    const body = document.body;
-    const previewEl = document.getElementById('preview');
-    const previewTextEl = previewEl.querySelector('span');
-    const learnToastEl = document.getElementById('learn-toast');
-    const learnToastTitleEl = learnToastEl.querySelector('.learn-toast-title');
-    const learnToastDetailEl = learnToastEl.querySelector('.learn-toast-detail');
-    const bars = document.querySelectorAll('.bar');
-    let currentRms = 0;
-    let smoothed = 0;
-    let learnToastTimer = null;
-
-    function showLearnToast(from, to) {
-      const label = String(from || '').trim();
-      const replacement = String(to || '').trim();
-      if (!label || !replacement) return;
-
-      learnToastTitleEl.textContent = `"${label}" was learned`;
-      learnToastDetailEl.textContent = `Will use "${replacement}" next time`;
-      body.dataset.toast = 'learn';
-      body.dataset.layout = 'expanded';
-
-      if (learnToastTimer) clearTimeout(learnToastTimer);
-      learnToastTimer = setTimeout(() => {
-        body.dataset.toast = '';
-        if (body.dataset.state === 'idle' && body.dataset.liveTranscript !== 'on') {
-          body.dataset.layout = 'compact';
-        }
-        learnToastTimer = null;
-      }, 3200);
-    }
-
-    function setPreview(text) {
-      const trimmed = String(text || '').trim();
-      if (!trimmed) {
-        previewTextEl.textContent = 'Listening…';
-        previewEl.classList.add('empty');
-        previewEl.scrollLeft = 0;
-        return;
-      }
-      previewTextEl.textContent = trimmed;
-      previewEl.classList.remove('empty');
-      requestAnimationFrame(() => {
-        previewEl.scrollLeft = previewEl.scrollWidth;
-      });
-    }
-
-    function animateBars() {
-      smoothed += (currentRms - smoothed) * 0.35;
-      const base = 6;
-      const maxGrowth = 22;
-      const now = Date.now();
-      bars.forEach((bar, i) => {
-        const phase = (now / 180) + i * 0.7;
-        const wiggle = (Math.sin(phase) + 1) / 2;
-        const isRecording = body.dataset.state === 'recording';
-        const boost = isRecording ? Math.max(smoothed, 0.05) : 0;
-        const h = base + boost * maxGrowth * (0.4 + wiggle * 0.6);
-        bar.style.height = h.toFixed(1) + 'px';
-      });
-      requestAnimationFrame(animateBars);
-    }
-    animateBars();
-
-    function setLiveTranscript(enabled) {
-      body.dataset.liveTranscript = enabled ? 'on' : 'off';
-      if (!enabled) {
-        previewTextEl.textContent = '';
-        previewEl.classList.add('empty');
-        previewEl.scrollLeft = 0;
-      }
-    }
-
-    function applyHudLayout(expanded) {
-      const transcriptOn = body.dataset.liveTranscript === 'on';
-      const style = body.dataset.style;
-      const shouldLayout = style === 'notch' || ((style === 'classic' || style === 'cursor') && transcriptOn);
-      if (!shouldLayout) return;
-      body.dataset.layout = expanded ? 'expanded' : 'compact';
-      if (expanded && transcriptOn) {
-        previewTextEl.textContent = 'Listening…';
-        previewEl.classList.add('empty');
-        previewEl.scrollLeft = 0;
-      } else if (!expanded) {
-        previewTextEl.textContent = '';
-        previewEl.classList.add('empty');
-        previewEl.scrollLeft = 0;
-      }
-    }
-
-    async function setup() {
-      if (!window.__TAURI__?.event) return false;
-      const { listen } = window.__TAURI__.event;
-      await listen('state', (e) => {
-        body.dataset.state = String(e.payload);
-        if (e.payload !== 'recording') currentRms = 0;
-      });
-      await listen('rms', (e) => {
-        currentRms = Math.min(1, Math.max(0, Number(e.payload) || 0));
-      });
-      await listen('hud_layout', (e) => {
-        applyHudLayout(e.payload === 'expanded');
-      });
-      await listen('partial', (e) => {
-        if (body.dataset.liveTranscript !== 'on') return;
-        setPreview(e.payload);
-      });
-      await listen('live_transcript', (e) => {
-        setLiveTranscript(Boolean(e.payload));
-      });
-      await listen('hud_style', (e) => {
-        const style = String(e.payload);
-        body.dataset.style = style === 'classic' || style === 'cursor' ? style : 'notch';
-      });
-      await listen('word_learned', (e) => {
-        const item = e.payload || {};
-        if (!item.from || !item.to) return;
-        showLearnToast(item.from, item.to);
-      });
-      if (window.__TAURI__?.core?.invoke) {
-        try {
-          body.dataset.style = await window.__TAURI__.core.invoke('get_hud_style');
-          setLiveTranscript(await window.__TAURI__.core.invoke('get_live_transcript'));
-        } catch (_) {}
-      }
-      return true;
-    }
-
-    async function waitForTauriAndSetup() {
-      for (let i = 0; i < 50; i++) {
-        if (await setup()) return;
-        await new Promise(r => setTimeout(r, 100));
-      }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', waitForTauriAndSetup);
-    } else {
-      waitForTauriAndSetup();
-    }
-  </script>
+  <script src="hud.js"></script>
 </body>
 </html>
