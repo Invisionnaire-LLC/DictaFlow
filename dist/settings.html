@@ -51,6 +51,14 @@
       box-sizing: border-box;
       min-width: 0;
     }
+    textarea.combo {
+      box-sizing: border-box;
+      width: 100%;
+      resize: vertical;
+      min-height: 70px;
+      font-family: ui-monospace, Menlo, monospace;
+      line-height: 1.4;
+    }
     .combo-wrap {
       flex: 1;
       position: relative;
@@ -185,6 +193,81 @@
       <div class="hint">Use reset if the pill disappears off-screen or behind other windows.</div>
 
       <div id="hudStyleMsg" class="msg"></div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <h1 style="margin-top: 18px">Transcription</h1>
+      <div class="sub">Where speech is turned into text. Local runs fully offline (default).</div>
+
+      <div class="row">
+        <label>Language</label>
+        <select id="asrLanguage" class="combo">
+          <option value="auto">Normal — detect &amp; keep spoken language</option>
+          <option value="en">Force English</option>
+          <option value="es">Español (forzar español)</option>
+          <option value="translate_en">Translate anything → English</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label>Backend</label>
+        <select id="asrBackend" class="combo">
+          <option value="local">Local — Whisper (offline, private)</option>
+          <option value="groq">Groq API (fast, cloud)</option>
+          <option value="openai">OpenAI API (cloud)</option>
+        </select>
+      </div>
+
+      <div id="asrCloudFields" style="display:none">
+        <div class="row">
+          <label>API key</label>
+          <input id="asrApiKey" class="combo" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your API key" />
+        </div>
+        <div class="row">
+          <label>Model</label>
+          <select id="asrModel" class="combo"></select>
+        </div>
+        <div class="hint" id="asrHint"></div>
+      </div>
+
+      <div class="row check-row">
+        <input id="autoSubmit" type="checkbox" />
+        <label for="autoSubmit">Press Enter automatically after pasting (auto-send)</label>
+      </div>
+
+      <div class="hint">
+        Local keeps your voice on this Mac and needs no internet. Cloud backends send audio to a third party — faster and they free up ~1.5&nbsp;GB of RAM, but require an API key and internet.
+      </div>
+
+      <div id="asrMsg" class="msg"></div>
+
+      <div class="inline-actions">
+        <button id="asrSave" class="primary" disabled>Save</button>
+      </div>
+    </div>
+
+    <hr />
+
+    <div class="section">
+      <div style="display:flex; align-items:center; gap:10px; margin-top:18px">
+        <img src="petlaptop.png" alt="" width="34" height="34" style="image-rendering: pixelated; border-radius:6px; flex:none" />
+        <h1 style="margin:0">Custom words</h1>
+      </div>
+      <div class="sub">Names, slang, and terms Whisper should recognize. Separate with commas.</div>
+
+      <textarea id="vocab" class="combo" rows="4" spellcheck="false" placeholder="e.g. Bayamón, Guaynabo, mofongo, Yadiel, chévere, brutal"></textarea>
+
+      <div class="hint">
+        These bias transcription toward your words — great for Puerto Rican terms and Spanish names. Works with local and cloud backends.
+      </div>
+
+      <div id="vocabMsg" class="msg"></div>
+
+      <div class="inline-actions">
+        <button id="vocabSave" class="primary" disabled>Save words</button>
+      </div>
     </div>
 
     <hr />
@@ -653,6 +736,198 @@
       } catch (err) {
         hudStyleMsgEl.textContent = String(err);
         hudStyleMsgEl.className = "msg err";
+      }
+    });
+
+    // --- Transcription backend ---
+
+    const asrLanguageEl = document.getElementById("asrLanguage");
+    const asrBackendEl = document.getElementById("asrBackend");
+    const asrCloudFieldsEl = document.getElementById("asrCloudFields");
+    const asrApiKeyEl = document.getElementById("asrApiKey");
+    const asrModelEl = document.getElementById("asrModel");
+    const asrHintEl = document.getElementById("asrHint");
+    const asrMsgEl = document.getElementById("asrMsg");
+    const asrSaveBtn = document.getElementById("asrSave");
+    const autoSubmitEl = document.getElementById("autoSubmit");
+
+    let asrCurrent = { backend: "local", model: "", api_key: "" };
+
+    const ASR_HINTS = {
+      groq: "Get a key at console.groq.com. Default model: whisper-large-v3.",
+      openai: "Get a key at platform.openai.com. Default model: gpt-4o-transcribe.",
+    };
+    const ASR_MODELS = {
+      groq: ["whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-large-v3-en"],
+      openai: ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+    };
+
+    function setAsrMessage(text, kind = "") {
+      asrMsgEl.textContent = text;
+      asrMsgEl.className = kind ? `msg ${kind}` : "msg";
+    }
+
+    function asrIsCloud() {
+      return asrBackendEl.value !== "local";
+    }
+
+    function populateAsrModels(provider, selected) {
+      asrModelEl.innerHTML = "";
+      const list = ASR_MODELS[provider] || [];
+      for (const m of list) {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        asrModelEl.appendChild(opt);
+      }
+      asrModelEl.value = selected && list.includes(selected) ? selected : (list[0] || "");
+    }
+
+    function asrDirty() {
+      const model = asrIsCloud() ? asrModelEl.value : "";
+      return (
+        asrBackendEl.value !== asrCurrent.backend ||
+        model !== (asrCurrent.model || "") ||
+        asrApiKeyEl.value.trim() !== (asrCurrent.api_key || "")
+      );
+    }
+
+    function updateAsrSaveState() {
+      const needsKey = asrIsCloud() && !asrApiKeyEl.value.trim();
+      asrSaveBtn.disabled = needsKey || !asrDirty();
+    }
+
+    function refreshAsrFields() {
+      const cloud = asrIsCloud();
+      asrCloudFieldsEl.style.display = cloud ? "block" : "none";
+      if (cloud) {
+        populateAsrModels(asrBackendEl.value, asrModelEl.value);
+        asrHintEl.textContent = ASR_HINTS[asrBackendEl.value] || "";
+      }
+      updateAsrSaveState();
+    }
+
+    async function loadAsrConfig() {
+      try {
+        const cfg = await invoke("get_transcription_config");
+        const provider = cfg.backend === "local" ? "groq" : cfg.backend;
+        populateAsrModels(provider, cfg.model || cfg.resolved_model);
+        asrBackendEl.value = cfg.backend;
+        asrApiKeyEl.value = cfg.api_key || "";
+        asrCurrent = {
+          backend: cfg.backend,
+          model: cfg.backend === "local" ? "" : asrModelEl.value,
+          api_key: cfg.api_key || "",
+        };
+        refreshAsrFields();
+      } catch (err) {
+        setAsrMessage(String(err), "err");
+      }
+    }
+    loadAsrConfig();
+
+    asrBackendEl.addEventListener("change", refreshAsrFields);
+    asrApiKeyEl.addEventListener("input", updateAsrSaveState);
+    asrModelEl.addEventListener("change", updateAsrSaveState);
+
+    asrSaveBtn.addEventListener("click", async () => {
+      asrSaveBtn.disabled = true;
+      setAsrMessage("Saving…");
+      const model = asrIsCloud() ? asrModelEl.value : "";
+      try {
+        const backend = await invoke("set_transcription_config", {
+          backend: asrBackendEl.value,
+          apiKey: asrApiKeyEl.value.trim(),
+          model,
+        });
+        asrCurrent = { backend, model, api_key: asrApiKeyEl.value.trim() };
+        setAsrMessage(
+          backend === "local"
+            ? "Using local Whisper (offline)."
+            : `Using ${backend} API. Audio will be sent to the cloud on each dictation.`,
+          "ok"
+        );
+        updateAsrSaveState();
+      } catch (err) {
+        setAsrMessage(String(err), "err");
+        updateAsrSaveState();
+      }
+    });
+
+    // Language (applies to local + cloud, saves instantly)
+    async function loadAsrLanguage() {
+      try {
+        asrLanguageEl.value = await invoke("get_transcription_language");
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadAsrLanguage();
+    asrLanguageEl.addEventListener("change", async () => {
+      try {
+        const saved = await invoke("set_transcription_language", { language: asrLanguageEl.value });
+        asrLanguageEl.value = saved;
+        setAsrMessage("Language updated.", "ok");
+      } catch (err) {
+        setAsrMessage(String(err), "err");
+      }
+    });
+
+    // Auto-submit (press Enter after paste)
+    async function loadAutoSubmit() {
+      try {
+        autoSubmitEl.checked = await invoke("get_auto_submit");
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadAutoSubmit();
+    autoSubmitEl.addEventListener("change", async () => {
+      try {
+        const enabled = await invoke("set_auto_submit", { enabled: autoSubmitEl.checked });
+        autoSubmitEl.checked = enabled;
+        setAsrMessage(enabled ? "Auto-send on: Enter is pressed after paste." : "Auto-send off.", "ok");
+      } catch (err) {
+        autoSubmitEl.checked = !autoSubmitEl.checked;
+        setAsrMessage(String(err), "err");
+      }
+    });
+
+    // --- Custom words (vocabulary) ---
+
+    const vocabEl = document.getElementById("vocab");
+    const vocabMsgEl = document.getElementById("vocabMsg");
+    const vocabSaveBtn = document.getElementById("vocabSave");
+    let vocabCurrent = "";
+
+    async function loadVocab() {
+      try {
+        vocabCurrent = await invoke("get_vocabulary");
+        vocabEl.value = vocabCurrent;
+      } catch (err) {
+        console.error(err);
+      }
+    }
+    loadVocab();
+
+    vocabEl.addEventListener("input", () => {
+      vocabSaveBtn.disabled = vocabEl.value.trim() === vocabCurrent.trim();
+    });
+
+    vocabSaveBtn.addEventListener("click", async () => {
+      vocabSaveBtn.disabled = true;
+      vocabMsgEl.textContent = "";
+      vocabMsgEl.className = "msg";
+      try {
+        const saved = await invoke("set_vocabulary", { words: vocabEl.value });
+        vocabCurrent = saved;
+        vocabEl.value = saved;
+        vocabMsgEl.textContent = "Saved.";
+        vocabMsgEl.className = "msg ok";
+      } catch (err) {
+        vocabMsgEl.textContent = String(err);
+        vocabMsgEl.className = "msg err";
+        vocabSaveBtn.disabled = false;
       }
     });
   </script>

@@ -4,6 +4,7 @@
 mod asr;
 mod audio;
 mod cleanup;
+mod cloud_asr;
 mod dictionary;
 mod history;
 mod login_item;
@@ -19,7 +20,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::str::FromStr;
 use tauri::{
     image::Image,
@@ -64,6 +65,8 @@ pub struct AppContext {
     pub audio: AudioController,
     pub cleaner: HybridCleaner,
     pub asr: Mutex<Option<Arc<asr::Transcriber>>>,
+    /// Cloud transcription backend (Local by default — keeps everything offline).
+    pub cloud: RwLock<cloud_asr::CloudTranscriber>,
     pub state: Mutex<AppState>,
     pub current_shortcut: Mutex<Shortcut>,
     pub current_hotkey: Mutex<Hotkey>,
@@ -208,6 +211,14 @@ fn main() {
             get_ollama_model,
             list_ollama_models,
             set_ollama_model,
+            get_transcription_config,
+            set_transcription_config,
+            get_transcription_language,
+            set_transcription_language,
+            get_auto_submit,
+            set_auto_submit,
+            get_vocabulary,
+            set_vocabulary,
             get_launch_at_login,
             set_launch_at_login,
             close_settings,
@@ -242,6 +253,20 @@ fn main() {
                 .clone()
                 .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
             let cleaner = HybridCleaner::new(Duration::from_millis(800), ollama_model.clone());
+
+            let cloud_backend = cloud_asr::Backend::parse(
+                saved.transcription_backend.as_deref().unwrap_or("local"),
+            );
+            let cloud = cloud_asr::CloudTranscriber::new(
+                cloud_backend,
+                saved.transcription_api_key.clone().unwrap_or_default(),
+                saved.transcription_model.clone().unwrap_or_default(),
+            );
+            tracing::info!(
+                "settings: transcription backend '{}'",
+                cloud_backend.as_str()
+            );
+
             audio.set_device(saved.input_device.clone());
             if let Some(d) = &saved.input_device {
                 tracing::info!("settings: using input device '{}'", d);
@@ -261,6 +286,7 @@ fn main() {
                 audio,
                 cleaner,
                 asr: Mutex::new(None),
+                cloud: RwLock::new(cloud),
                 state: Mutex::new(AppState::Idle),
                 current_shortcut: Mutex::new(shortcut),
                 current_hotkey: Mutex::new(hotkey.clone()),
@@ -709,7 +735,7 @@ fn open_auxiliary_window(
 fn hud_style() -> String {
     settings::Settings::load()
         .hud_style
-        .unwrap_or_else(|| "notch".to_string())
+        .unwrap_or_else(|| "classic".to_string())
 }
 
 fn hud_size(style: &str) -> (f64, f64) {
@@ -824,15 +850,40 @@ fn default_hud_anchor(monitor: &tauri::Monitor, scale: f64) -> HudAnchor {
     }
 }
 
-fn position_hud(window: &tauri::WebviewWindow) {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let settings = settings::Settings::load();
-    let style = settings.hud_style.as_deref().unwrap_or("notch");
-    let monitor = window
+/// The monitor the user is currently on (under the mouse cursor), so the HUD
+/// follows them across displays. Falls back to the window's / primary monitor.
+fn active_monitor(window: &tauri::WebviewWindow) -> Option<tauri::Monitor> {
+    if let Ok(pos) = window.cursor_position() {
+        if let Ok(Some(m)) = window.monitor_from_point(pos.x, pos.y) {
+            return Some(m);
+        }
+    }
+    window
         .current_monitor()
         .ok()
         .flatten()
-        .or_else(|| window.primary_monitor().ok().flatten());
+        .or_else(|| window.primary_monitor().ok().flatten())
+}
+
+/// True if the HUD (placed at `pos`, size `w`×`h` physical px) is centered on `monitor`.
+fn position_on_monitor(
+    pos: HudPosition,
+    w_phys: i32,
+    h_phys: i32,
+    monitor: &tauri::Monitor,
+) -> bool {
+    let mp = monitor.position();
+    let ms = monitor.size();
+    let cx = pos.x + w_phys / 2;
+    let cy = pos.y + h_phys / 2;
+    cx >= mp.x && cx < mp.x + ms.width as i32 && cy >= mp.y && cy < mp.y + ms.height as i32
+}
+
+fn position_hud(window: &tauri::WebviewWindow) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let settings = settings::Settings::load();
+    let style = settings.hud_style.as_deref().unwrap_or("classic");
+    let monitor = active_monitor(window);
 
     if style == "classic" {
         if settings.hud_anchor.is_some() {
@@ -845,26 +896,28 @@ fn position_hud(window: &tauri::WebviewWindow) {
             hud_size("classic").0,
             hud_size("classic").1,
         ));
-        let pos = if let Some(pos) = settings.hud_position {
-            if hud_position_visible(window, pos.x, pos.y, w_phys, h_phys) {
-                Some(pos)
-            } else {
-                tracing::warn!(
-                    "saved classic hud position ({}, {}) is off-screen; resetting",
-                    pos.x,
-                    pos.y
-                );
-                clear_saved_hud_placement();
-                None
-            }
-        } else {
-            None
-        };
-        let pos = pos.or_else(|| {
-            monitor
-                .as_ref()
-                .map(|m| default_classic_hud_position(m, scale))
-        });
+        // Drop a genuinely off-screen saved position; keep it otherwise.
+        let saved_visible = settings
+            .hud_position
+            .filter(|p| hud_position_visible(window, p.x, p.y, w_phys, h_phys));
+        if settings.hud_position.is_some() && saved_visible.is_none() {
+            tracing::warn!("saved classic hud position is off-screen; resetting");
+            clear_saved_hud_placement();
+        }
+        // Honor the dragged position only while on the monitor it was placed on;
+        // otherwise show the pill on the monitor the user is currently using.
+        let pos = saved_visible
+            .filter(|p| {
+                monitor
+                    .as_ref()
+                    .map(|m| position_on_monitor(*p, w_phys, h_phys, m))
+                    .unwrap_or(true)
+            })
+            .or_else(|| {
+                monitor
+                    .as_ref()
+                    .map(|m| default_classic_hud_position(m, scale))
+            });
         if let Some(pos) = pos {
             let _ = window.set_position(PhysicalPosition::new(pos.x, pos.y));
         }
@@ -919,7 +972,7 @@ fn position_hud(window: &tauri::WebviewWindow) {
 
 fn persist_legacy_hud_anchor(window: &tauri::WebviewWindow) {
     let mut saved = settings::Settings::load();
-    if saved.hud_style.as_deref().unwrap_or("notch") == "classic" {
+    if saved.hud_style.as_deref().unwrap_or("classic") == "classic" {
         return;
     }
     if saved.hud_anchor.is_some() || saved.hud_position.is_none() {
@@ -1295,6 +1348,142 @@ fn set_ollama_model(app: AppHandle, model: String) -> Result<String, String> {
     Ok(selected)
 }
 
+#[derive(serde::Serialize)]
+struct TranscriptionConfig {
+    backend: String,
+    /// User's model override (empty = provider default).
+    model: String,
+    /// The model that would actually be sent (resolved against provider default).
+    resolved_model: String,
+    /// API key is returned so the local settings page can show/edit it.
+    api_key: String,
+}
+
+#[tauri::command]
+fn get_transcription_config(app: AppHandle) -> TranscriptionConfig {
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        let cloud = ctx.cloud.read();
+        return TranscriptionConfig {
+            backend: cloud.backend().as_str().to_string(),
+            model: cloud.model_override().to_string(),
+            resolved_model: cloud.resolved_model(),
+            api_key: cloud.api_key().to_string(),
+        };
+    }
+    let saved = settings::Settings::load();
+    let backend =
+        cloud_asr::Backend::parse(saved.transcription_backend.as_deref().unwrap_or("local"));
+    let transcriber = cloud_asr::CloudTranscriber::new(
+        backend,
+        saved.transcription_api_key.unwrap_or_default(),
+        saved.transcription_model.unwrap_or_default(),
+    );
+    TranscriptionConfig {
+        backend: backend.as_str().to_string(),
+        model: transcriber.model_override().to_string(),
+        resolved_model: transcriber.resolved_model(),
+        api_key: transcriber.api_key().to_string(),
+    }
+}
+
+#[tauri::command]
+fn set_transcription_config(
+    app: AppHandle,
+    backend: String,
+    api_key: String,
+    model: String,
+) -> Result<String, String> {
+    let parsed = cloud_asr::Backend::parse(&backend);
+    let key = api_key.trim().to_string();
+    let model = model.trim().to_string();
+
+    if parsed.is_cloud() && key.is_empty() {
+        return Err(format!(
+            "Enter an API key to use the {} backend.",
+            parsed.as_str()
+        ));
+    }
+
+    let ctx = app
+        .try_state::<AppContext>()
+        .ok_or_else(|| "app context missing".to_string())?;
+
+    let was_cloud = ctx.cloud.read().is_cloud();
+
+    let transcriber = cloud_asr::CloudTranscriber::new(parsed, key.clone(), model.clone());
+    let resolved = transcriber.resolved_model();
+    *ctx.cloud.write() = transcriber;
+
+    let mut saved = settings::Settings::load();
+    saved.transcription_backend = Some(parsed.as_str().to_string());
+    saved.transcription_api_key = if key.is_empty() { None } else { Some(key) };
+    saved.transcription_model = if model.is_empty() { None } else { Some(model) };
+    if let Err(e) = saved.save() {
+        tracing::warn!("could not persist transcription config: {:?}", e);
+    }
+
+    // Free the ~1.5 GB local model when switching to cloud; reload it when going local.
+    if parsed.is_cloud() {
+        if let Some(t) = ctx.asr.lock().take() {
+            drop(t);
+            tracing::info!("switched to cloud backend; released local Whisper model");
+        }
+    } else if was_cloud && ctx.asr.lock().is_none() {
+        tracing::info!("switched to local backend; loading Whisper model");
+        spawn_initialization(app.clone());
+    }
+
+    tracing::info!(
+        "transcription backend set to '{}' (model '{}')",
+        parsed.as_str(),
+        resolved
+    );
+    Ok(parsed.as_str().to_string())
+}
+
+#[tauri::command]
+fn get_transcription_language() -> String {
+    current_language_mode().as_str().to_string()
+}
+
+#[tauri::command]
+fn set_transcription_language(language: String) -> Result<String, String> {
+    let mode = settings::LanguageMode::parse(&language);
+    let mut saved = settings::Settings::load();
+    saved.transcription_language = Some(mode.as_str().to_string());
+    saved
+        .save()
+        .map_err(|e| format!("could not save language: {}", e))?;
+    tracing::info!("transcription language set to '{}'", mode.as_str());
+    Ok(mode.as_str().to_string())
+}
+
+#[tauri::command]
+fn get_auto_submit() -> bool {
+    settings::Settings::load().auto_submit
+}
+
+#[tauri::command]
+fn set_auto_submit(enabled: bool) -> Result<bool, String> {
+    settings::Settings::update(|s| s.auto_submit = enabled)
+        .map_err(|e| format!("could not save auto-submit: {}", e))?;
+    tracing::info!("auto-submit set to {}", enabled);
+    Ok(enabled)
+}
+
+#[tauri::command]
+fn get_vocabulary() -> String {
+    asr::read_vocabulary()
+}
+
+#[tauri::command]
+fn set_vocabulary(words: String) -> Result<String, String> {
+    let cleaned = words.trim().to_string();
+    asr::write_vocabulary(&cleaned).map_err(|e| format!("could not save words: {}", e))?;
+    tracing::info!("custom vocabulary updated ({} chars)", cleaned.len());
+    Ok(cleaned)
+}
+
 #[tauri::command]
 fn get_launch_at_login() -> bool {
     login_item::is_enabled()
@@ -1403,54 +1592,22 @@ fn spawn_rms_forwarder(app: AppHandle, rx: mpsc::Receiver<f32>) {
     });
 }
 
-/// Downloads the Whisper model in the background and loads it into memory.
+/// Loads the local Whisper model (unless a cloud backend is active) and warms
+/// up the Ollama cleaner, all in the background.
 fn spawn_initialization(app: AppHandle) {
     thread::spawn(move || {
-        if !asr::is_model_downloaded() {
-            tracing::info!("whisper model not found locally; downloading (~1.5 GB)");
-            let app_for_progress = app.clone();
-            match asr::download_model(|done, total| {
-                if total > 0 && done % (64 * 1024 * 1024) < (1 << 16) {
-                    let pct = (done as f64 / total as f64 * 100.0) as u32;
-                    tracing::info!("whisper download: {}% ({} / {})", pct, done, total);
-                    let _ = app_for_progress.emit("download_progress", pct);
-                }
-            }) {
-                Ok(_) => tracing::info!("whisper model download complete"),
-                Err(e) => {
-                    tracing::error!("whisper download failed: {:?}", e);
-                    return;
-                }
-            }
+        let cloud = app
+            .try_state::<AppContext>()
+            .map(|ctx| ctx.cloud.read().is_cloud())
+            .unwrap_or(false);
+
+        if cloud {
+            tracing::info!("cloud transcription backend active; skipping local Whisper model");
+        } else {
+            load_local_whisper(&app);
         }
 
-        let path = match asr::model_path() {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::error!("no model path: {:?}", e);
-                return;
-            }
-        };
-
-        match asr::Transcriber::new(&path) {
-            Ok(t) => {
-                let transcriber = Arc::new(t);
-                if let Some(ctx) = app.try_state::<AppContext>() {
-                    *ctx.asr.lock() = Some(transcriber.clone());
-                }
-                tracing::info!("whisper model loaded; prewarming");
-                let transcriber_warm = transcriber.clone();
-                thread::spawn(move || {
-                    if let Err(e) = transcriber_warm.prewarm() {
-                        tracing::warn!("whisper prewarm failed: {:?}", e);
-                    } else {
-                        tracing::info!("whisper prewarm complete");
-                    }
-                });
-            }
-            Err(e) => tracing::error!("whisper init failed: {:?}", e),
-        }
-
+        // The Ollama cleaner runs regardless of which transcription backend is used.
         let app_warm = app.clone();
         thread::spawn(move || {
             if let Some(ctx) = app_warm.try_state::<AppContext>() {
@@ -1458,6 +1615,54 @@ fn spawn_initialization(app: AppHandle) {
             }
         });
     });
+}
+
+/// Downloads (if needed), loads, and prewarms the local Whisper model in memory.
+fn load_local_whisper(app: &AppHandle) {
+    if !asr::is_model_downloaded() {
+        tracing::info!("whisper model not found locally; downloading (~1.5 GB)");
+        let app_for_progress = app.clone();
+        match asr::download_model(|done, total| {
+            if total > 0 && done % (64 * 1024 * 1024) < (1 << 16) {
+                let pct = (done as f64 / total as f64 * 100.0) as u32;
+                tracing::info!("whisper download: {}% ({} / {})", pct, done, total);
+                let _ = app_for_progress.emit("download_progress", pct);
+            }
+        }) {
+            Ok(_) => tracing::info!("whisper model download complete"),
+            Err(e) => {
+                tracing::error!("whisper download failed: {:?}", e);
+                return;
+            }
+        }
+    }
+
+    let path = match asr::model_path() {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!("no model path: {:?}", e);
+            return;
+        }
+    };
+
+    match asr::Transcriber::new(&path) {
+        Ok(t) => {
+            let transcriber = Arc::new(t);
+            if let Some(ctx) = app.try_state::<AppContext>() {
+                *ctx.asr.lock() = Some(transcriber.clone());
+            }
+            tracing::info!("whisper model loaded; prewarming");
+            let transcriber_warm = transcriber.clone();
+            thread::spawn(move || {
+                if let Err(e) = transcriber_warm.prewarm() {
+                    tracing::warn!("whisper prewarm failed: {:?}", e);
+                } else {
+                    tracing::info!("whisper prewarm complete");
+                }
+            });
+        }
+        Err(e) => tracing::error!("whisper init failed: {:?}", e),
+    }
 }
 
 fn release_should_stop_recording(press_at: Instant, ignore_release: bool) -> bool {
@@ -1611,12 +1816,20 @@ fn finish_recording(app: AppHandle) {
             return;
         }
 
-        paste::spawn_edit_learning_watch(
-            app_clone.clone(),
-            cleaned.clone(),
-            before_field,
-            target_pid,
-        );
+        if settings::Settings::load().auto_submit {
+            // Submit immediately (chat-style). Skip edit-learning since the field clears.
+            thread::sleep(Duration::from_millis(120));
+            if let Err(e) = paste::press_enter(&app_clone) {
+                tracing::warn!("auto-submit enter failed: {:?}", e);
+            }
+        } else {
+            paste::spawn_edit_learning_watch(
+                app_clone.clone(),
+                cleaned.clone(),
+                before_field,
+                target_pid,
+            );
+        }
 
         if let Some(ctx) = app_clone.try_state::<AppContext>() {
             *ctx.paste_target_pid.lock() = None;
@@ -1641,13 +1854,29 @@ fn finish_recording(app: AppHandle) {
     });
 }
 
+fn current_language_mode() -> settings::LanguageMode {
+    settings::LanguageMode::parse(
+        settings::Settings::load()
+            .transcription_language
+            .as_deref()
+            .unwrap_or(settings::DEFAULT_LANGUAGE_MODE),
+    )
+}
+
 fn transcribe(ctx: &AppContext, pcm: &PcmBuffer) -> anyhow::Result<String> {
+    let lang = current_language_mode();
+    {
+        let cloud = ctx.cloud.read();
+        if cloud.is_cloud() {
+            return cloud.transcribe(&pcm.samples, pcm.sample_rate, lang, &asr::initial_prompt());
+        }
+    }
     let transcriber = {
         let guard = ctx.asr.lock();
         guard.clone()
     };
     match transcriber {
-        Some(t) => t.transcribe(&pcm.samples),
+        Some(t) => t.transcribe(&pcm.samples, lang),
         None => {
             tracing::warn!("whisper not ready yet");
             Err(anyhow::anyhow!(
@@ -1727,14 +1956,15 @@ fn start_partial_transcription(app: AppHandle) {
                     return;
                 }
 
-                let partial = match transcriber.transcribe_partial(&samples) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => return,
-                    Err(e) => {
-                        tracing::debug!("partial transcription failed: {:?}", e);
-                        return;
-                    }
-                };
+                let partial =
+                    match transcriber.transcribe_partial(&samples, current_language_mode()) {
+                        Ok(Some(t)) => t,
+                        Ok(None) => return,
+                        Err(e) => {
+                            tracing::debug!("partial transcription failed: {:?}", e);
+                            return;
+                        }
+                    };
 
                 let preview = partial_preview_tail(&partial);
                 if preview.is_empty() {

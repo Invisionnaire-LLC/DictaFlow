@@ -10,17 +10,28 @@ use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
+use crate::settings::LanguageMode;
+
 pub const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 pub const MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
 pub const EXPECTED_BYTES: u64 = 1_624_555_275;
 
 pub const VOCAB_FILENAME: &str = "vocabulary.txt";
-const DEFAULT_VOCAB: &str = "DictaFlow, Invisionnaire.\n";
+const DEFAULT_VOCAB: &str =
+    "DictaFlow, Invisionnaire, boricua, Puerto Rico, brutal, chévere, bregar, \
+janguear, jangueo, perreo, revolú, chavos, china, guagua, zafacón, chinchorro, chinchorreo, \
+mofongo, pernil, lechón, alcapurria, bacalaíto, tostones, tembleque, coquito, piragua, parcha, \
+gandules, sofrito, pana, broki, corillo, nene, nena, jevo, jeva, acho, wepa, jíbaro, coquí, \
+cangri, bichote, al garete, ay bendito, ñoño, gufeao, mamey, jumeta, parguero, melao, \
+Bayamón, Guaynabo, Caguas, Carolina, Ponce, Mayagüez, Arecibo, Humacao, Fajardo, Aguadilla, \
+Cataño, Río Piedras, Santurce, Loíza, Vieques, Culebra, San Juan, Cayey, Utuado, Yauco, \
+Manatí, Vega Baja, Trujillo Alto, José, María, Juan, Luis, Carlos, Miguel, Ángel, Rafael, \
+Héctor, Ramón, Jesús, Javier, Yadiel, Yaritza, Yamil, Glorimar, Keishla, Génesis, Adrián, \
+Wanda, Iris, Milagros, Carmen, Rosa, Edwin, Wilfredo, Heriberto.\n";
 
 pub struct Transcriber {
     ctx: Mutex<WhisperContext>,
-    vocabulary: String,
 }
 
 impl Transcriber {
@@ -43,23 +54,26 @@ impl Transcriber {
         seed_vocabulary_if_missing();
         Ok(Transcriber {
             ctx: Mutex::new(ctx),
-            vocabulary: load_vocabulary(),
         })
     }
 
     pub fn prewarm(&self) -> Result<()> {
         let silent = vec![0.0_f32; 16_000];
-        let _ = self.transcribe(&silent)?;
+        let _ = self.transcribe(&silent, LanguageMode::Auto)?;
         Ok(())
     }
 
-    pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
-        self.transcribe_inner(samples, true, false)?
+    pub fn transcribe(&self, samples: &[f32], lang: LanguageMode) -> Result<String> {
+        self.transcribe_inner(samples, true, false, lang)?
             .ok_or_else(|| anyhow!("empty transcription"))
     }
 
     /// Live preview pass — only the most recent audio tail to keep latency bounded.
-    pub fn transcribe_partial(&self, samples: &[f32]) -> Result<Option<String>> {
+    pub fn transcribe_partial(
+        &self,
+        samples: &[f32],
+        lang: LanguageMode,
+    ) -> Result<Option<String>> {
         const MAX_PARTIAL_SAMPLES: usize = 16_000 * 2;
         const MIN_PARTIAL_SAMPLES: usize = 16_000 * 3 / 10;
         let tail = if samples.len() > MAX_PARTIAL_SAMPLES {
@@ -73,7 +87,7 @@ impl Transcriber {
         if !tail_has_speech(tail) {
             return Ok(None);
         }
-        self.transcribe_inner(tail, false, true)
+        self.transcribe_inner(tail, false, true, lang)
     }
 
     fn transcribe_inner(
@@ -81,6 +95,7 @@ impl Transcriber {
         samples: &[f32],
         log_result: bool,
         live_preview: bool,
+        lang: LanguageMode,
     ) -> Result<Option<String>> {
         let start = std::time::Instant::now();
         let audio_secs = samples.len() as f32 / 16_000.0;
@@ -89,8 +104,8 @@ impl Transcriber {
 
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(num_cpus());
-        params.set_translate(false);
-        params.set_language(Some("en"));
+        params.set_translate(lang.translate_to_english());
+        params.set_language(lang.whisper_language());
         params.set_suppress_blank(true);
         params.set_print_special(false);
         params.set_print_progress(false);
@@ -106,13 +121,10 @@ impl Transcriber {
             // Vocabulary prompt helps final transcription but can leak into live preview.
         } else {
             params.set_single_segment(false);
-            let vocab = crate::dictionary::whisper_prompt();
-            if vocab.is_empty() {
-                if !self.vocabulary.is_empty() {
-                    params.set_initial_prompt(&self.vocabulary);
-                }
-            } else {
-                params.set_initial_prompt(&vocab);
+            // `prompt` must outlive `state.full` below; whisper-rs copies it internally.
+            let prompt = initial_prompt();
+            if !prompt.is_empty() {
+                params.set_initial_prompt(&prompt);
             }
         }
 
@@ -259,6 +271,34 @@ fn load_vocabulary() -> String {
             .to_string(),
         None => String::new(),
     }
+}
+
+/// User-editable custom words/names (comma-separated) that bias transcription.
+pub fn read_vocabulary() -> String {
+    seed_vocabulary_if_missing();
+    load_vocabulary()
+}
+
+/// Persist the custom vocabulary. Applied fresh on the next transcription.
+pub fn write_vocabulary(text: &str) -> Result<()> {
+    let path = vocabulary_path().ok_or_else(|| anyhow!("no vocabulary path"))?;
+    fs::write(&path, text.trim()).context("write vocabulary")?;
+    Ok(())
+}
+
+/// The Whisper initial prompt: custom vocabulary plus learned dictionary terms.
+/// Read fresh each call so edits apply without restarting the app.
+pub fn initial_prompt() -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let vocab = load_vocabulary();
+    if !vocab.is_empty() {
+        parts.push(vocab);
+    }
+    let dict = crate::dictionary::whisper_prompt();
+    if !dict.is_empty() {
+        parts.push(dict);
+    }
+    parts.join(" ")
 }
 
 pub fn is_model_downloaded() -> bool {
