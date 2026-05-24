@@ -72,11 +72,15 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
 
         let before = macos::read_focused_text(target_pid);
         let field_unreadable = before.is_none();
+        // Terminals accept ⌘V reliably but their AX text can't be verified, so
+        // running AX insert and/or the typing fallback paints the text twice.
+        let is_terminal = macos::is_terminal_pid(target_pid);
 
         // Only use AX insert when the field is readable (Cursor, Notes, etc.).
         // Electron apps (Telegram, Slack) often report AX success without inserting,
         // which blocks the clipboard fallback. Never stop on Unverified for those.
         if !field_unreadable
+            && !is_terminal
             && macos::try_ax_insert_text(text, target_pid)
             && macos::measure_paste_outcome(text, before.as_deref(), target_pid)
                 == PasteOutcome::Confirmed
@@ -96,10 +100,11 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
         thread::sleep(Duration::from_millis(250));
 
         let mut outcome = macos::measure_paste_outcome(text, before.as_deref(), target_pid);
-        if outcome == PasteOutcome::Failed
-            || (outcome == PasteOutcome::Unverified
-                && field_unreadable
-                && macos::is_browser_pid(target_pid))
+        if !is_terminal
+            && (outcome == PasteOutcome::Failed
+                || (outcome == PasteOutcome::Unverified
+                    && field_unreadable
+                    && macos::is_browser_pid(target_pid)))
         {
             tracing::debug!("clipboard paste unconfirmed in browser; trying direct typing");
             macos::type_text_directly(text).context("direct typing")?;
@@ -470,6 +475,28 @@ mod macos {
             .is_some_and(|id| is_browser_bundle_id(&id))
     }
 
+    pub fn is_terminal_bundle_id(bundle_id: &str) -> bool {
+        matches!(
+            bundle_id,
+            "com.apple.Terminal"
+                | "com.googlecode.iterm2"
+                | "net.kovidgoyal.kitty"
+                | "com.github.wez.wezterm"
+                | "io.alacritty"
+                | "org.alacritty"
+                | "co.zeit.hyper"
+                | "com.mitchellh.ghostty"
+        ) || bundle_id.starts_with("dev.warp.Warp")
+    }
+
+    /// Terminals reliably accept ⌘V but don't expose their text via Accessibility,
+    /// so AX insert and the typing fallback both double the paste. Force clipboard-only.
+    pub fn is_terminal_pid(target_pid: Option<i32>) -> bool {
+        target_pid
+            .and_then(bundle_id_for_pid)
+            .is_some_and(|id| is_terminal_bundle_id(&id))
+    }
+
     pub fn synth_paste_cgevent(target_pid: Option<i32>) -> Result<()> {
         use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGKeyCode};
         use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -838,5 +865,18 @@ mod tests {
         assert!(is_browser_bundle_id("company.thebrowser.Browser"));
         assert!(!is_browser_bundle_id("com.tinyspeck.slackmacgap"));
         assert!(!is_browser_bundle_id("com.invisionnaire.dictaflow"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn detects_common_terminal_bundle_ids() {
+        use super::macos::is_terminal_bundle_id;
+
+        assert!(is_terminal_bundle_id("com.apple.Terminal"));
+        assert!(is_terminal_bundle_id("com.googlecode.iterm2"));
+        assert!(is_terminal_bundle_id("dev.warp.Warp-Stable"));
+        assert!(is_terminal_bundle_id("com.mitchellh.ghostty"));
+        assert!(!is_terminal_bundle_id("com.apple.Safari"));
+        assert!(!is_terminal_bundle_id("com.invisionnaire.dictaflow"));
     }
 }
