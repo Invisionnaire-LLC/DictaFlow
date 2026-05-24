@@ -22,9 +22,10 @@ const GROQ_DEFAULT_MODEL: &str = "whisper-large-v3";
 const OPENAI_DEFAULT_MODEL: &str = "gpt-4o-transcribe";
 
 /// Cloud transcription APIs cap the bias `prompt`. Groq rejects prompts over 896
-/// characters with HTTP 400; OpenAI truncates to its token budget. We trim to a
-/// safe length (at a comma boundary) so a long custom vocabulary never errors.
-const MAX_PROMPT_CHARS: usize = 880;
+/// **bytes** with HTTP 400 (accented chars count as 2+ bytes); OpenAI truncates to
+/// its token budget. We trim by byte length (at a comma boundary) with a safety
+/// margin so a long custom vocabulary never errors.
+const MAX_PROMPT_BYTES: usize = 870;
 
 /// Where transcription runs. `Local` keeps everything offline (default).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,24 +205,33 @@ impl CloudTranscriber {
     }
 }
 
-/// Trim the bias prompt to `MAX_PROMPT_CHARS`, cutting at the last comma so we
-/// never split a word or a multi-byte char. Counts Unicode chars (what the API
-/// limits), not bytes.
+/// Trim the bias prompt to `MAX_PROMPT_BYTES`, cutting at the last comma. Works in
+/// byte units (the API limits bytes), but only ever cuts on UTF-8 char boundaries
+/// so it never panics or splits a multi-byte char.
 fn cap_prompt(prompt: &str) -> String {
-    if prompt.chars().count() <= MAX_PROMPT_CHARS {
+    if prompt.len() <= MAX_PROMPT_BYTES {
         return prompt.to_string();
     }
-    let truncated: String = prompt.chars().take(MAX_PROMPT_CHARS).collect();
+    // Largest byte index <= budget that lands on a char boundary.
+    let mut end = 0;
+    for (i, c) in prompt.char_indices() {
+        if i + c.len_utf8() > MAX_PROMPT_BYTES {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    let truncated = &prompt[..end];
     let trimmed = match truncated.rfind(',') {
         Some(i) => &truncated[..i],
-        None => truncated.as_str(),
+        None => truncated,
     };
+    let trimmed = trimmed.trim();
     tracing::debug!(
-        "cloud prompt capped from {} to {} chars",
-        prompt.chars().count(),
-        trimmed.chars().count()
+        "cloud prompt capped from {} to {} bytes",
+        prompt.len(),
+        trimmed.len()
     );
-    trimmed.trim().to_string()
+    trimmed.to_string()
 }
 
 /// Encode mono f32 PCM into a 16-bit WAV in memory.
@@ -280,21 +290,25 @@ mod tests {
     }
 
     #[test]
-    fn cap_prompt_trims_long_prompts_under_limit_at_comma() {
+    fn cap_prompt_trims_long_prompts_under_byte_limit_at_comma() {
         let word = "palabra, ";
-        let long = word.repeat(200); // ~1800 chars
+        let long = word.repeat(200); // ~1800 bytes
         let capped = cap_prompt(&long);
-        assert!(capped.chars().count() <= MAX_PROMPT_CHARS);
+        assert!(capped.len() <= MAX_PROMPT_BYTES);
         assert!(!capped.ends_with(','));
         // Trimmed at a comma boundary → ends on a whole word.
         assert!(capped.ends_with("palabra"));
     }
 
     #[test]
-    fn cap_prompt_handles_multibyte_without_panic() {
-        let long = "ñoño, ".repeat(300); // multi-byte chars, ~1800 chars
+    fn cap_prompt_byte_limit_counts_multibyte_chars() {
+        // Accented chars are 2 bytes each — the cap must measure bytes, not chars,
+        // because Groq's 896 limit is in bytes.
+        let long = "ñoño, ".repeat(300); // multi-byte, ~2100 bytes
         let capped = cap_prompt(&long);
-        assert!(capped.chars().count() <= MAX_PROMPT_CHARS);
+        assert!(capped.len() <= MAX_PROMPT_BYTES);
+        // Must remain valid UTF-8 (no split char) — this would panic if not.
+        assert!(capped.is_char_boundary(capped.len()));
     }
 
     #[test]
