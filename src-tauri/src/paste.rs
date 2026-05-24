@@ -140,6 +140,24 @@ fn synth_paste_enigo() -> Result<()> {
     Ok(())
 }
 
+/// Press Enter/Return (used by the "auto-submit after dictation" option).
+pub fn press_enter(app: &AppHandle) -> Result<()> {
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(press_enter_sync());
+    })
+    .map_err(|e| anyhow!("schedule main-thread enter: {}", e))?;
+
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|e| anyhow!("enter worker timed out: {}", e))?
+}
+
+fn press_enter_sync() -> Result<()> {
+    let mut enigo = Enigo::new(&Settings::default()).context("enigo init")?;
+    enigo.key(Key::Return, Direction::Click)?;
+    Ok(())
+}
+
 fn classify_paste_result(
     expected: &str,
     before: Option<&str>,
