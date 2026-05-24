@@ -169,7 +169,8 @@ fn learn_pairs(pairs: Vec<(String, String)>) -> Result<Vec<LearnedUpdate>> {
         }
         dict.save()?;
     }
-    sync_whisper_vocabulary()?;
+    // Learned terms reach the Whisper prompt via `whisper_prompt()` (see
+    // asr::initial_prompt); they must NOT overwrite the user's custom words file.
     Ok(learned)
 }
 
@@ -249,20 +250,14 @@ pub fn delete_replacement(from: &str) -> Result<bool> {
     if key.is_empty() {
         return Ok(false);
     }
-    let changed = {
-        let mut dict = DICT.lock();
-        let before = dict.replacements.len();
-        dict.replacements
-            .retain(|r| !r.from.eq_ignore_ascii_case(key));
-        if dict.replacements.len() == before {
-            return Ok(false);
-        }
-        dict.save()?;
-        true
-    };
-    if changed {
-        sync_whisper_vocabulary()?;
+    let mut dict = DICT.lock();
+    let before = dict.replacements.len();
+    dict.replacements
+        .retain(|r| !r.from.eq_ignore_ascii_case(key));
+    if dict.replacements.len() == before {
+        return Ok(false);
     }
+    dict.save()?;
     Ok(true)
 }
 
@@ -287,22 +282,6 @@ pub fn whisper_prompt() -> String {
     }
     out.push('.');
     out
-}
-
-fn sync_whisper_vocabulary() -> Result<()> {
-    let prompt = whisper_prompt();
-    if let Some(path) = vocabulary_path() {
-        fs::write(&path, format!("{prompt}\n")).context("write vocabulary.txt")?;
-    }
-    Ok(())
-}
-
-fn vocabulary_path() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DICTAFLOW_VOCABULARY_PATH") {
-        return Some(PathBuf::from(path));
-    }
-    let dir = dirs::data_local_dir()?.join("DictaFlow");
-    Some(dir.join(crate::asr::VOCAB_FILENAME))
 }
 
 fn tokenize(text: &str) -> Vec<String> {
