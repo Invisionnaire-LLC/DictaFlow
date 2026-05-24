@@ -55,6 +55,7 @@ pub fn capture_frontmost_pid() -> Option<i32> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum PasteOutcome {
     Confirmed,
     Unverified,
@@ -122,6 +123,10 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = target_pid;
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() && paste_wayland(text).is_ok() {
+            return Ok(());
+        }
+
         let mut clipboard = Clipboard::new().context("clipboard init")?;
         let previous = clipboard.get_text().ok();
         clipboard
@@ -138,6 +143,36 @@ fn paste_on_main(text: &str, target_pid: Option<i32>) -> Result<()> {
         );
         Ok(())
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn paste_wayland(text: &str) -> Result<()> {
+    let mut child = std::process::Command::new("wl-copy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .context("wl-copy spawn")?;
+
+    {
+        use std::io::Write;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("wl-copy stdin unavailable"))?;
+        stdin
+            .write_all(text.as_bytes())
+            .context("wl-copy stdin write")?;
+    }
+
+    let status = child.wait().context("wl-copy wait")?;
+    if !status.success() {
+        return Err(anyhow!("wl-copy exited with {status}"));
+    }
+
+    thread::sleep(Duration::from_millis(30));
+    synth_paste_wtype().context("wtype paste")?;
+    thread::sleep(Duration::from_millis(50));
+    tracing::info!("paste via wl-copy+wtype ({})", text.len());
+    Ok(())
 }
 
 fn restore_clipboard_unless_confirmed(
@@ -164,6 +199,10 @@ fn should_restore_previous_clipboard(outcome: PasteOutcome) -> bool {
 
 #[cfg(not(target_os = "macos"))]
 fn synth_paste_enigo() -> Result<()> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && synth_paste_wtype().is_ok() {
+        return Ok(());
+    }
+
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
     let mut enigo = Enigo::new(&Settings::default()).context("enigo init")?;
@@ -177,6 +216,21 @@ fn synth_paste_enigo() -> Result<()> {
     enigo.key(Key::Unicode('v'), Direction::Click)?;
     enigo.key(modifier, Direction::Release)?;
     Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn synth_paste_wtype() -> Result<()> {
+    let status = std::process::Command::new("wtype")
+        .args(["-M", "ctrl", "-k", "v", "-m", "ctrl"])
+        .status()
+        .context("wtype ctrl+v")?;
+
+    if status.success() {
+        tracing::info!("paste shortcut via wtype");
+        Ok(())
+    } else {
+        Err(anyhow!("wtype exited with {status}"))
+    }
 }
 
 /// Press Enter/Return (used by the "auto-submit after dictation" option).
@@ -199,6 +253,7 @@ fn press_enter_sync() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn classify_paste_result(
     expected: &str,
     before: Option<&str>,

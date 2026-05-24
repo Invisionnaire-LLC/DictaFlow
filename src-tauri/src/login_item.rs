@@ -16,6 +16,7 @@ pub fn launch_at_login_supported() -> bool {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn is_mac_app_store_build() -> bool {
     app_bundle_path(&std::env::current_exe().unwrap_or_default())
         .is_some_and(|app| app.join("Contents/embedded.provisionprofile").exists())
