@@ -26,6 +26,23 @@ jobs:
       - name: Show CUDA version
         run: nvcc --version
 
+      # CMake's "Visual Studio 17 2022" generator compiles the CUDA backend via
+      # MSBuild, which needs CUDA's BuildCustomizations (CUDA *.props/*.targets)
+      # inside the VS install. GitHub's image has them; Blacksmith's doesn't, so
+      # copy them from the CUDA toolkit into VS. Fixes "No CUDA toolset found".
+      - name: Wire CUDA into Visual Studio (MSBuild integration)
+        shell: pwsh
+        run: |
+          $cuda = $env:CUDA_PATH
+          if (-not $cuda) { $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5" }
+          $src = Join-Path $cuda "extras\visual_studio_integration\MSBuildExtensions"
+          if (-not (Test-Path $src)) { throw "CUDA VS integration not found at $src" }
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dst = Join-Path $vsPath "MSBuild\Microsoft\VC\v170\BuildCustomizations"
+          Write-Host "Copying CUDA MSBuild integration`n  from: $src`n  to:   $dst"
+          Copy-Item "$src\*" -Destination $dst -Recurse -Force
+          Get-ChildItem $dst | Select-Object -ExpandProperty Name
+
       # whisper-rs-sys runs bindgen, which needs libclang.dll (part of LLVM).
       # GitHub's windows-latest ships LLVM; Blacksmith's image does not, so
       # install it explicitly and point bindgen at it via LIBCLANG_PATH.
