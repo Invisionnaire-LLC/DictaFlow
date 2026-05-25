@@ -1,7 +1,9 @@
 //! LM Studio cleanup backend. Same role as Ollama (a local LLM that polishes
 //! text), but speaks LM Studio's OpenAI-compatible wire protocol:
-//!   - generate:    POST {base_url}/chat/completions  (choices[0].message.content)
-//!   - list models: GET  {base_url}/models            (data[].id)
+//!
+//! - generate:    POST {base_url}/chat/completions  (choices[0].message.content)
+//! - list models: GET  {base_url}/models            (data[].id)
+//!
 //! Default base URL is http://localhost:1234/v1 (port is configurable).
 
 use std::time::Duration;

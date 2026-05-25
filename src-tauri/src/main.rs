@@ -313,9 +313,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_hotkey,
             set_hotkey,
-            get_ollama_model,
-            list_ollama_models,
-            set_ollama_model,
+            get_cleanup_config,
+            list_cleanup_models,
+            set_cleanup_model,
+            set_cleanup_backend,
             get_transcription_config,
             set_transcription_config,
             get_transcription_language,
@@ -361,11 +362,31 @@ fn main() {
             let (audio, level_rx) = AudioController::spawn();
             secrets::migrate_transcription_api_key_from_settings();
             let saved = settings::Settings::load();
+            let cleanup_backend = saved
+                .cleanup_backend
+                .clone()
+                .unwrap_or_else(|| "ollama".to_string());
             let ollama_model = saved
                 .ollama_model
                 .clone()
                 .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
-            let cleaner = HybridCleaner::new(Duration::from_millis(800), ollama_model.clone());
+            let lmstudio_model = saved.lmstudio_model.clone().unwrap_or_default();
+            let lmstudio_base_url = saved
+                .lmstudio_base_url
+                .clone()
+                .unwrap_or_else(|| cleanup::lmstudio::DEFAULT_BASE_URL.to_string());
+            let cleaner_box = cleanup::make_cleaner(
+                &cleanup_backend,
+                Duration::from_millis(800),
+                &ollama_model,
+                &lmstudio_model,
+                &lmstudio_base_url,
+            );
+            let cleaner = HybridCleaner::new(
+                cleanup_backend.clone(),
+                lmstudio_base_url.clone(),
+                cleaner_box,
+            );
 
             let cloud_backend = cloud_asr::Backend::parse(
                 saved.transcription_backend.as_deref().unwrap_or("local"),
@@ -384,7 +405,11 @@ fn main() {
             if let Some(d) = &saved.input_device {
                 tracing::info!("settings: using input device '{}'", d);
             }
-            tracing::info!("settings: using ollama model '{}'", ollama_model);
+            tracing::info!(
+                "settings: cleanup backend '{}' (ollama model '{}')",
+                cleanup::normalize_backend(&cleanup_backend),
+                ollama_model
+            );
             if let Err(e) = login_item::reconcile(saved.launch_at_login) {
                 tracing::warn!("launch at login reconcile: {:?}", e);
             }
@@ -1573,48 +1598,164 @@ fn set_hotkey(app: AppHandle, hotkey: Hotkey) -> Result<Hotkey, String> {
     Ok(hotkey)
 }
 
-#[tauri::command]
-fn get_ollama_model(app: AppHandle) -> String {
-    if let Some(ctx) = app.try_state::<AppContext>() {
-        return ctx.cleaner.ollama_model();
-    }
-    settings::Settings::load()
-        .ollama_model
-        .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string())
+#[derive(serde::Serialize)]
+struct CleanupConfig {
+    backend: String,
+    /// User's model selection (empty = backend default / first available).
+    model: String,
+    /// The model that would actually be sent.
+    resolved_model: String,
+    /// LM Studio base URL (always populated so the UI can prefill it).
+    base_url: String,
 }
 
 #[tauri::command]
-fn list_ollama_models(app: AppHandle) -> Result<Vec<cleanup::ModelInfo>, String> {
+fn get_cleanup_config(app: AppHandle) -> CleanupConfig {
+    if let Some(ctx) = app.try_state::<AppContext>() {
+        let backend = ctx.cleaner.backend_name();
+        let model = ctx.cleaner.model();
+        let resolved_model = if !model.is_empty() {
+            model.clone()
+        } else {
+            ctx.cleaner
+                .list_models()
+                .ok()
+                .and_then(|m| m.into_iter().next())
+                .map(|m| m.name)
+                .unwrap_or_default()
+        };
+        return CleanupConfig {
+            backend,
+            model,
+            resolved_model,
+            base_url: ctx.cleaner.base_url(),
+        };
+    }
+    let saved = settings::Settings::load();
+    let backend = cleanup::normalize_backend(saved.cleanup_backend.as_deref().unwrap_or("ollama"))
+        .to_string();
+    let model = if backend == "lmstudio" {
+        saved.lmstudio_model.clone().unwrap_or_default()
+    } else {
+        saved
+            .ollama_model
+            .clone()
+            .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string())
+    };
+    CleanupConfig {
+        resolved_model: model.clone(),
+        model,
+        backend,
+        base_url: saved
+            .lmstudio_base_url
+            .clone()
+            .unwrap_or_else(|| cleanup::lmstudio::DEFAULT_BASE_URL.to_string()),
+    }
+}
+
+#[tauri::command]
+fn list_cleanup_models(app: AppHandle) -> Result<Vec<cleanup::ModelInfo>, String> {
     let ctx = app
         .try_state::<AppContext>()
         .ok_or_else(|| "app context missing".to_string())?;
-    ctx.cleaner
-        .list_ollama_models()
-        .map_err(|e| format!("could not list Ollama models: {}", e))
+    let backend = ctx.cleaner.backend_name();
+    ctx.cleaner.list_models().map_err(|e| {
+        if backend == "lmstudio" {
+            format!(
+                "couldn't reach LM Studio at {}: {}",
+                ctx.cleaner.base_url(),
+                e
+            )
+        } else {
+            format!("could not list Ollama models: {}", e)
+        }
+    })
 }
 
 #[tauri::command]
-fn set_ollama_model(app: AppHandle, model: String) -> Result<String, String> {
+fn set_cleanup_model(app: AppHandle, model: String) -> Result<String, String> {
     let trimmed = model.trim();
-    if trimmed.is_empty() {
+    let ctx = app
+        .try_state::<AppContext>()
+        .ok_or_else(|| "app context missing".to_string())?;
+    let backend = ctx.cleaner.backend_name();
+
+    // Ollama always needs a model; LM Studio allows empty (= first available).
+    if backend != "lmstudio" && trimmed.is_empty() {
         return Err("Enter an Ollama model first.".to_string());
     }
 
+    let selected = trimmed.to_string();
+    ctx.cleaner.set_model(selected.clone());
+
+    if let Err(e) = settings::Settings::update(|saved| {
+        if backend == "lmstudio" {
+            saved.lmstudio_model = if selected.is_empty() {
+                None
+            } else {
+                Some(selected.clone())
+            };
+        } else {
+            saved.ollama_model = Some(selected.clone());
+        }
+    }) {
+        tracing::warn!("could not persist cleanup model: {:?}", e);
+    }
+
+    tracing::info!("cleanup model ({}) changed to: {}", backend, selected);
+    Ok(selected)
+}
+
+#[tauri::command]
+fn set_cleanup_backend(
+    app: AppHandle,
+    backend: String,
+    base_url: Option<String>,
+) -> Result<CleanupConfig, String> {
     let ctx = app
         .try_state::<AppContext>()
         .ok_or_else(|| "app context missing".to_string())?;
 
-    let selected = trimmed.to_string();
-    ctx.cleaner.set_ollama_model(selected.clone());
+    let normalized = cleanup::normalize_backend(&backend).to_string();
+    let saved_now = settings::Settings::load();
+    let lmstudio_base_url = base_url
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty())
+        .or_else(|| saved_now.lmstudio_base_url.clone())
+        .unwrap_or_else(|| cleanup::lmstudio::DEFAULT_BASE_URL.to_string());
+    let ollama_model = saved_now
+        .ollama_model
+        .clone()
+        .unwrap_or_else(|| DEFAULT_OLLAMA_MODEL.to_string());
+    let lmstudio_model = saved_now.lmstudio_model.clone().unwrap_or_default();
 
-    if let Err(e) = settings::Settings::update(|saved| {
-        saved.ollama_model = Some(selected.clone());
+    let cleaner_box = cleanup::make_cleaner(
+        &normalized,
+        Duration::from_millis(800),
+        &ollama_model,
+        &lmstudio_model,
+        &lmstudio_base_url,
+    );
+    ctx.cleaner
+        .set_backend(normalized.clone(), lmstudio_base_url.clone(), cleaner_box);
+
+    if let Err(e) = settings::Settings::update(|s| {
+        s.cleanup_backend = Some(normalized.clone());
+        s.lmstudio_base_url = Some(lmstudio_base_url.clone());
     }) {
-        tracing::warn!("could not persist ollama model: {:?}", e);
+        tracing::warn!("could not persist cleanup backend: {:?}", e);
     }
+    tracing::info!("cleanup backend changed to: {}", normalized);
 
-    tracing::info!("ollama model changed to: {}", selected);
-    Ok(selected)
+    // Warm up the new backend off the UI thread.
+    let app_warm = app.clone();
+    thread::spawn(move || {
+        if let Some(ctx) = app_warm.try_state::<AppContext>() {
+            ctx.cleaner.warmup();
+        }
+    });
+
+    Ok(get_cleanup_config(app))
 }
 
 #[derive(serde::Serialize)]
