@@ -37,8 +37,13 @@ jobs:
           if (-not $cuda) { $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5" }
           $src = Join-Path $cuda "extras\visual_studio_integration\MSBuildExtensions"
           if (-not (Test-Path $src)) { throw "CUDA VS integration not found at $src" }
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          # -products * so this also finds VS Build Tools (Blacksmith's image),
+          # not just full VS editions.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "No Visual Studio install found via vswhere" }
           $dst = Join-Path $vsPath "MSBuild\Microsoft\VC\v170\BuildCustomizations"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
           Write-Host "Copying CUDA MSBuild integration`n  from: $src`n  to:   $dst"
           Copy-Item "$src\*" -Destination $dst -Recurse -Force
           Get-ChildItem $dst | Select-Object -ExpandProperty Name
