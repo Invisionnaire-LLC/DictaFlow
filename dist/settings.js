@@ -27,12 +27,18 @@
     const hkMsgEl = document.getElementById("hkMsg");
     const saveBtn = document.getElementById("save");
     const closeBtn = document.getElementById("close");
-    const ollamaModelEl = document.getElementById("ollamaModel");
-    const ollamaToggleEl = document.getElementById("ollamaToggle");
-    const ollamaListEl = document.getElementById("ollamaList");
-    const ollamaMsgEl = document.getElementById("ollamaMsg");
-    const ollamaSaveBtn = document.getElementById("ollamaSave");
-    const ollamaRefreshBtn = document.getElementById("ollamaRefresh");
+    const cleanupBackendEl = document.getElementById("cleanupBackend");
+    const lmstudioUrlFieldEl = document.getElementById("lmstudioUrlField");
+    const lmstudioBaseUrlEl = document.getElementById("lmstudioBaseUrl");
+    const lmstudioUrlSaveBtn = document.getElementById("lmstudioUrlSave");
+    const cleanupModelEl = document.getElementById("cleanupModel");
+    const cleanupToggleEl = document.getElementById("cleanupToggle");
+    const cleanupListEl = document.getElementById("cleanupList");
+    const cleanupMsgEl = document.getElementById("cleanupMsg");
+    const cleanupModelLabelEl = document.getElementById("cleanupModelLabel");
+    const cleanupHintEl = document.getElementById("cleanupHint");
+    const cleanupSaveBtn = document.getElementById("cleanupSave");
+    const cleanupRefreshBtn = document.getElementById("cleanupRefresh");
     const launchAtLoginEl = document.getElementById("launchAtLogin");
     const loginMsgEl = document.getElementById("loginMsg");
 
@@ -54,7 +60,8 @@
     let vocabCurrent = "";
 
     let pending = null;
-    let currentOllamaModel = "";
+    let currentCleanupModel = "";
+    let cleanupBackend = "ollama";
 
     function displayHotkey(h) {
       if (!h || !h.code) return "-";
@@ -86,16 +93,20 @@
       return `${value.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
     }
 
-    function setOllamaMessage(text, kind = "") {
-      ollamaMsgEl.textContent = text;
-      ollamaMsgEl.className = kind ? `msg ${kind}` : "msg";
+    function setCleanupMessage(text, kind = "") {
+      cleanupMsgEl.textContent = text;
+      cleanupMsgEl.className = kind ? `msg ${kind}` : "msg";
+    }
+
+    function cleanupIsLmStudio() {
+      return cleanupBackendEl.value === "lmstudio";
     }
 
     let comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
 
     function renderComboList() {
-      const selected = ollamaModelEl.value.trim();
-      ollamaListEl.innerHTML = "";
+      const selected = cleanupModelEl.value.trim();
+      cleanupListEl.replaceChildren();
       for (const item of comboItems) {
         const row = document.createElement("div");
         row.className = "combo-item";
@@ -112,65 +123,110 @@
         }
         row.addEventListener("mousedown", (e) => {
           e.preventDefault();
-          ollamaModelEl.value = item.value;
-          onOllamaInput();
+          cleanupModelEl.value = item.value;
+          onCleanupModelInput();
           closeComboList();
-          ollamaModelEl.focus();
+          cleanupModelEl.focus();
         });
-        ollamaListEl.appendChild(row);
+        cleanupListEl.appendChild(row);
       }
     }
 
     function openComboList() {
       renderComboList();
-      ollamaListEl.classList.add("open");
-      ollamaToggleEl.setAttribute("aria-expanded", "true");
+      cleanupListEl.classList.add("open");
+      cleanupToggleEl.setAttribute("aria-expanded", "true");
     }
 
     function closeComboList() {
-      ollamaListEl.classList.remove("open");
-      ollamaToggleEl.setAttribute("aria-expanded", "false");
+      cleanupListEl.classList.remove("open");
+      cleanupToggleEl.setAttribute("aria-expanded", "false");
     }
 
-    async function loadOllamaModels() {
-      ollamaModelEl.disabled = true;
-      ollamaSaveBtn.disabled = true;
-      ollamaModelEl.placeholder = "Loading…";
-      setOllamaMessage("");
+    // Set the hint via safe DOM nodes (no innerHTML).
+    function setCleanupHint(lm) {
+      cleanupHintEl.replaceChildren();
+      if (lm) {
+        cleanupHintEl.textContent =
+          "Pick a model loaded in LM Studio, or leave blank to use the first available. The server must be running with a model loaded.";
+      } else {
+        cleanupHintEl.append(
+          "Type any Ollama model, or open the list to pick from installed ones. "
+        );
+        const b = document.createElement("b");
+        b.textContent = "gemma3:1b";
+        cleanupHintEl.append(b, " is always available as the DictaFlow default.");
+      }
+    }
+
+    // Apply backend-specific labels/placeholders and show the URL field for LM Studio.
+    function refreshCleanupFields() {
+      const lm = cleanupIsLmStudio();
+      lmstudioUrlFieldEl.style.display = lm ? "block" : "none";
+      cleanupModelLabelEl.textContent = lm ? "LM Studio model" : "Model name";
+      cleanupModelEl.placeholder = lm ? "(first available)" : "gemma3:1b";
+      setCleanupHint(lm);
+    }
+
+    async function loadCleanupModels() {
+      cleanupModelEl.disabled = true;
+      cleanupSaveBtn.disabled = true;
+      cleanupModelEl.placeholder = "Loading…";
+      setCleanupMessage("");
+      const lm = cleanupIsLmStudio();
+      const defaultItems = lm ? [] : [{ value: "gemma3:1b", meta: "DictaFlow default" }];
       let current = "";
       try {
-        const [cur, models] = await Promise.all([
-          invoke("get_ollama_model"),
-          invoke("list_ollama_models"),
+        const [cfg, models] = await Promise.all([
+          invoke("get_cleanup_config"),
+          invoke("list_cleanup_models"),
         ]);
-        current = cur;
-        const names = new Set(["gemma3:1b"]);
-        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
+        current = cfg.model || "";
+        const names = new Set(defaultItems.map((i) => i.value));
+        comboItems = defaultItems.slice();
         for (const model of models) {
           if (names.has(model.name)) continue;
           names.add(model.name);
-          comboItems.push({ value: model.name, meta: formatBytes(model.size) });
+          comboItems.push({ value: model.name, meta: lm ? "" : formatBytes(model.size) });
         }
         if (current && !names.has(current)) {
-          setOllamaMessage(`Current: ${current} (manual model)`, "");
+          setCleanupMessage(`Current: ${current} (manual model)`, "");
         } else if (!models.length) {
-          setOllamaMessage("Using DictaFlow default. You can also type any Ollama model name manually.", "ok");
+          setCleanupMessage(
+            lm
+              ? "No models reported. Load a model in LM Studio, then Refresh."
+              : "Using DictaFlow default. You can also type any Ollama model name manually.",
+            lm ? "" : "ok"
+          );
         } else {
-          setOllamaMessage(`Current: ${current}`, "ok");
+          setCleanupMessage(current ? `Current: ${current}` : "Using first available.", "ok");
         }
       } catch (err) {
-        current = await invoke("get_ollama_model").catch(() => "");
-        comboItems = [{ value: "gemma3:1b", meta: "DictaFlow default" }];
-        setOllamaMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
+        current = await invoke("get_cleanup_config").then((c) => c.model || "").catch(() => "");
+        comboItems = defaultItems.slice();
+        setCleanupMessage(`${String(err)}. You can still type and save a model name manually.`, "err");
       }
-      currentOllamaModel = current;
-      ollamaModelEl.value = current;
-      ollamaModelEl.placeholder = "gemma3:1b";
-      ollamaModelEl.disabled = false;
-      ollamaSaveBtn.disabled = true;
+      currentCleanupModel = current;
+      cleanupModelEl.value = current;
+      cleanupModelEl.placeholder = lm ? "(first available)" : "gemma3:1b";
+      cleanupModelEl.disabled = false;
+      cleanupSaveBtn.disabled = true;
       renderComboList();
     }
-    loadOllamaModels();
+
+    async function loadCleanupConfig() {
+      try {
+        const cfg = await invoke("get_cleanup_config");
+        cleanupBackend = cfg.backend || "ollama";
+        cleanupBackendEl.value = cleanupBackend;
+        lmstudioBaseUrlEl.value = cfg.base_url || "";
+      } catch (err) {
+        cleanupBackendEl.value = "ollama";
+      }
+      refreshCleanupFields();
+      await loadCleanupModels();
+    }
+    loadCleanupConfig();
 
     function setLoginMessage(text, kind = "") {
       loginMsgEl.textContent = text;
@@ -378,23 +434,25 @@
       }
     });
 
-    function onOllamaInput() {
-      const value = ollamaModelEl.value.trim();
-      ollamaSaveBtn.disabled = value === currentOllamaModel || !value;
-      setOllamaMessage(
-        value === currentOllamaModel ? `Current: ${currentOllamaModel}` : "",
-        value === currentOllamaModel ? "ok" : ""
+    function onCleanupModelInput() {
+      const value = cleanupModelEl.value.trim();
+      // LM Studio allows an empty model (= first available); Ollama requires one.
+      const sameAsCurrent = value === currentCleanupModel;
+      cleanupSaveBtn.disabled = sameAsCurrent || (!cleanupIsLmStudio() && !value);
+      setCleanupMessage(
+        sameAsCurrent && value ? `Current: ${currentCleanupModel}` : "",
+        sameAsCurrent && value ? "ok" : ""
       );
     }
-    ollamaModelEl.addEventListener("input", onOllamaInput);
-    ollamaModelEl.addEventListener("focus", openComboList);
-    ollamaToggleEl.addEventListener("click", (e) => {
+    cleanupModelEl.addEventListener("input", onCleanupModelInput);
+    cleanupModelEl.addEventListener("focus", openComboList);
+    cleanupToggleEl.addEventListener("click", (e) => {
       e.preventDefault();
-      if (ollamaListEl.classList.contains("open")) {
+      if (cleanupListEl.classList.contains("open")) {
         closeComboList();
       } else {
         openComboList();
-        ollamaModelEl.focus();
+        cleanupModelEl.focus();
       }
     });
     document.addEventListener("click", (e) => {
@@ -404,21 +462,54 @@
       if (e.key === "Escape") closeComboList();
     });
 
-    ollamaSaveBtn.addEventListener("click", async () => {
-      ollamaSaveBtn.disabled = true;
-      setOllamaMessage("");
+    // Switching engine persists immediately and reloads that backend's models.
+    cleanupBackendEl.addEventListener("change", async () => {
+      setCleanupMessage("Switching…");
       try {
-        const saved = await invoke("set_ollama_model", { model: ollamaModelEl.value.trim() });
-        currentOllamaModel = saved;
-        ollamaModelEl.value = saved;
-        setOllamaMessage(`Saved: ${saved}`, "ok");
+        const cfg = await invoke("set_cleanup_backend", {
+          backend: cleanupBackendEl.value,
+          baseUrl: cleanupIsLmStudio() ? lmstudioBaseUrlEl.value.trim() : null,
+        });
+        cleanupBackend = cfg.backend;
+        cleanupBackendEl.value = cfg.backend;
+        lmstudioBaseUrlEl.value = cfg.base_url || "";
+        refreshCleanupFields();
+        await loadCleanupModels();
       } catch (err) {
-        setOllamaMessage(String(err), "err");
-        ollamaSaveBtn.disabled = false;
+        setCleanupMessage(String(err), "err");
       }
     });
 
-    ollamaRefreshBtn.addEventListener("click", loadOllamaModels);
+    // Applying a new LM Studio URL re-points the backend, then reloads models.
+    lmstudioUrlSaveBtn.addEventListener("click", async () => {
+      setCleanupMessage("Applying…");
+      try {
+        const cfg = await invoke("set_cleanup_backend", {
+          backend: "lmstudio",
+          baseUrl: lmstudioBaseUrlEl.value.trim(),
+        });
+        lmstudioBaseUrlEl.value = cfg.base_url || "";
+        await loadCleanupModels();
+      } catch (err) {
+        setCleanupMessage(String(err), "err");
+      }
+    });
+
+    cleanupSaveBtn.addEventListener("click", async () => {
+      cleanupSaveBtn.disabled = true;
+      setCleanupMessage("");
+      try {
+        const saved = await invoke("set_cleanup_model", { model: cleanupModelEl.value.trim() });
+        currentCleanupModel = saved;
+        cleanupModelEl.value = saved;
+        setCleanupMessage(saved ? `Saved: ${saved}` : "Saved: (first available)", "ok");
+      } catch (err) {
+        setCleanupMessage(String(err), "err");
+        cleanupSaveBtn.disabled = false;
+      }
+    });
+
+    cleanupRefreshBtn.addEventListener("click", loadCleanupModels);
 
     launchAtLoginEl.addEventListener("change", async () => {
       launchAtLoginEl.disabled = true;

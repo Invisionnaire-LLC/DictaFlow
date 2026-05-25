@@ -641,27 +641,43 @@
       <section id="panel-cleanup" class="panel" aria-labelledby="nav-cleanup">
         <header class="panel-head">
           <h2>Cleanup</h2>
-          <p>Pick the local Ollama model used after rules cleanup. Rules always run first.</p>
+          <p>Pick the local LLM that polishes text after rules cleanup. Rules always run first.</p>
         </header>
 
         <div class="card">
-          <div class="card-title">Ollama model</div>
+          <div class="card-title">Cleanup engine</div>
           <div class="field">
-            <label for="ollamaModel">Model name</label>
+            <label for="cleanupBackend">Engine</label>
+            <select id="cleanupBackend" class="control">
+              <option value="ollama">Ollama (default)</option>
+              <option value="lmstudio">LM Studio</option>
+            </select>
+          </div>
+
+          <div class="field" id="lmstudioUrlField" style="display:none">
+            <label for="lmstudioBaseUrl">LM Studio server URL</label>
+            <div class="combo-row">
+              <input id="lmstudioBaseUrl" class="control" spellcheck="false" autocomplete="off" placeholder="http://localhost:1234/v1" />
+              <button id="lmstudioUrlSave" type="button">Apply</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="cleanupModel" id="cleanupModelLabel">Model name</label>
             <div class="combo-wrap">
               <div class="combo-row">
-                <input id="ollamaModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
-                <button id="ollamaToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
+                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
+                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
               </div>
-              <div id="ollamaList" class="combo-list" role="listbox"></div>
+              <div id="cleanupList" class="combo-list" role="listbox"></div>
             </div>
           </div>
           <div class="btn-row">
-            <button id="ollamaSave" class="primary" disabled>Save model</button>
-            <button id="ollamaRefresh" type="button">Refresh list</button>
+            <button id="cleanupSave" class="primary" disabled>Save model</button>
+            <button id="cleanupRefresh" type="button">Refresh list</button>
           </div>
-          <div id="ollamaMsg" class="msg"></div>
-          <p class="hint">
+          <div id="cleanupMsg" class="msg"></div>
+          <p class="hint" id="cleanupHint">
             Type any Ollama model, or open the list to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
           </p>
         </div>
