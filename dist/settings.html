@@ -485,20 +485,20 @@
         <h1>Settings</h1>
         <p>DictaFlow preferences</p>
       </div>
-      <button class="nav-btn" type="button" data-panel="dictation" aria-current="page">
-        <span class="nav-icon">⌨</span> Dictation
+      <button class="nav-btn" type="button" data-panel="shortcut" aria-current="page">
+        <span class="nav-icon">⌨</span> Shortcut
       </button>
-      <button class="nav-btn" type="button" data-panel="display">
-        <span class="nav-icon">◫</span> Display
+      <button class="nav-btn" type="button" data-panel="models">
+        <span class="nav-icon">✦</span> Models
       </button>
-      <button class="nav-btn" type="button" data-panel="cleanup">
-        <span class="nav-icon">✦</span> Cleanup
+      <button class="nav-btn" type="button" data-panel="appearance">
+        <span class="nav-icon">◫</span> Appearance
       </button>
       <button class="nav-btn" type="button" data-panel="vocabulary">
         <span class="nav-icon">Aa</span> Vocabulary
       </button>
-      <button class="nav-btn" type="button" data-panel="general">
-        <span class="nav-icon">⚙</span> General
+      <button class="nav-btn" type="button" data-panel="startup">
+        <span class="nav-icon">⚙</span> Startup
       </button>
       <button class="nav-btn" type="button" data-panel="permissions">
         <span class="nav-icon">◉</span> Permissions
@@ -506,22 +506,11 @@
     </aside>
 
     <main class="main">
-      <section id="panel-dictation" class="panel active" aria-labelledby="nav-dictation">
+      <section id="panel-shortcut" class="panel active" aria-labelledby="nav-shortcut">
         <header class="panel-head">
-          <h2>Dictation</h2>
+          <h2>Shortcut</h2>
           <p>Choose the global hotkey. Hold to talk, or tap twice to start and stop.</p>
         </header>
-
-        <div id="modelDownloadCard" class="card" hidden>
-          <div class="card-title">Downloading speech model</div>
-          <p class="hint" style="margin-top:0;margin-bottom:8px">
-            Whisper large-v3-turbo (~1.5 GB) downloads once on first launch. Dictation works after this finishes.
-          </p>
-          <div class="progress-track" aria-hidden="true">
-            <div id="modelDownloadBar" class="progress-fill"></div>
-          </div>
-          <p id="modelDownloadMeta" class="download-meta">Starting…</p>
-        </div>
 
         <div class="card">
           <div class="card-title">Hotkey</div>
@@ -540,6 +529,35 @@
           <p class="hint">
             macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try F13 or Ctrl + Space. Side mouse buttons work well with tap-to-toggle.
           </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">After dictation</div>
+          <div class="toggle-row">
+            <input id="autoSubmit" type="checkbox" />
+            <div class="toggle-copy">
+              <strong>Press Enter automatically after pasting (auto-send)</strong>
+              <span>Useful in chat apps when you want to send immediately after dictating.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-models" class="panel" aria-labelledby="nav-models">
+        <header class="panel-head">
+          <h2>Models</h2>
+          <p>The models that turn your speech into clean text.</p>
+        </header>
+
+        <div id="modelDownloadCard" class="card" hidden>
+          <div class="card-title">Downloading speech model</div>
+          <p class="hint" style="margin-top:0;margin-bottom:8px">
+            Whisper large-v3-turbo (~1.5 GB) downloads once on first launch. Dictation works after this finishes.
+          </p>
+          <div class="progress-track" aria-hidden="true">
+            <div id="modelDownloadBar" class="progress-fill"></div>
+          </div>
+          <p id="modelDownloadMeta" class="download-meta">Starting…</p>
         </div>
 
         <div class="card">
@@ -577,14 +595,6 @@
             <p class="hint" id="asrHint"></p>
           </div>
 
-          <div class="toggle-row">
-            <input id="autoSubmit" type="checkbox" />
-            <div class="toggle-copy">
-              <strong>Press Enter automatically after pasting (auto-send)</strong>
-              <span>Useful in chat apps when you want to send immediately after dictating.</span>
-            </div>
-          </div>
-
           <p class="hint">
             Local keeps your voice on this Mac and needs no internet. Cloud backends send audio to a third party — faster and they free up ~1.5&nbsp;GB of RAM, but require an API key and internet.
           </p>
@@ -594,11 +604,51 @@
             <button id="asrSave" class="primary" disabled>Save</button>
           </div>
         </div>
+
+        <div class="card">
+          <div class="card-title">Cleanup engine</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">Polishes the transcript after rules cleanup. Rules always run first.</p>
+
+          <div class="field">
+            <label for="cleanupBackend">Engine</label>
+            <select id="cleanupBackend" class="control">
+              <option value="ollama">Ollama (default)</option>
+              <option value="lmstudio">LM Studio</option>
+            </select>
+          </div>
+
+          <div class="field" id="lmstudioUrlField" style="display:none">
+            <label for="lmstudioBaseUrl">LM Studio server URL</label>
+            <div class="combo-row">
+              <input id="lmstudioBaseUrl" class="control" spellcheck="false" autocomplete="off" placeholder="http://localhost:1234/v1" />
+              <button id="lmstudioUrlSave" type="button">Apply</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="cleanupModel" id="cleanupModelLabel">Model name</label>
+            <div class="combo-wrap">
+              <div class="combo-row">
+                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
+                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
+              </div>
+              <div id="cleanupList" class="combo-list" role="listbox"></div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="cleanupSave" class="primary" disabled>Save model</button>
+            <button id="cleanupRefresh" type="button">Refresh list</button>
+          </div>
+          <div id="cleanupMsg" class="msg"></div>
+          <p class="hint" id="cleanupHint">
+            Type any Ollama model, or open the list to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
+          </p>
+        </div>
       </section>
 
-      <section id="panel-display" class="panel" aria-labelledby="nav-display">
+      <section id="panel-appearance" class="panel" aria-labelledby="nav-appearance">
         <header class="panel-head">
-          <h2>Display</h2>
+          <h2>Appearance</h2>
           <p>Control the floating HUD pill and live transcript preview.</p>
         </header>
 
@@ -635,51 +685,6 @@
           <p class="hint">Use reset for Classic or Notch if the pill disappears off-screen. Cursor style tracks your mouse while dictating.</p>
           <div id="cursorHudStatus" class="hint" hidden></div>
           <div id="hudStyleMsg" class="msg"></div>
-        </div>
-      </section>
-
-      <section id="panel-cleanup" class="panel" aria-labelledby="nav-cleanup">
-        <header class="panel-head">
-          <h2>Cleanup</h2>
-          <p>Pick the local LLM that polishes text after rules cleanup. Rules always run first.</p>
-        </header>
-
-        <div class="card">
-          <div class="card-title">Cleanup engine</div>
-          <div class="field">
-            <label for="cleanupBackend">Engine</label>
-            <select id="cleanupBackend" class="control">
-              <option value="ollama">Ollama (default)</option>
-              <option value="lmstudio">LM Studio</option>
-            </select>
-          </div>
-
-          <div class="field" id="lmstudioUrlField" style="display:none">
-            <label for="lmstudioBaseUrl">LM Studio server URL</label>
-            <div class="combo-row">
-              <input id="lmstudioBaseUrl" class="control" spellcheck="false" autocomplete="off" placeholder="http://localhost:1234/v1" />
-              <button id="lmstudioUrlSave" type="button">Apply</button>
-            </div>
-          </div>
-
-          <div class="field">
-            <label for="cleanupModel" id="cleanupModelLabel">Model name</label>
-            <div class="combo-wrap">
-              <div class="combo-row">
-                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
-                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
-              </div>
-              <div id="cleanupList" class="combo-list" role="listbox"></div>
-            </div>
-          </div>
-          <div class="btn-row">
-            <button id="cleanupSave" class="primary" disabled>Save model</button>
-            <button id="cleanupRefresh" type="button">Refresh list</button>
-          </div>
-          <div id="cleanupMsg" class="msg"></div>
-          <p class="hint" id="cleanupHint">
-            Type any Ollama model, or open the list to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
-          </p>
         </div>
       </section>
 
@@ -735,9 +740,9 @@
         </div>
       </section>
 
-      <section id="panel-general" class="panel" aria-labelledby="nav-general">
+      <section id="panel-startup" class="panel" aria-labelledby="nav-startup">
         <header class="panel-head">
-          <h2>General</h2>
+          <h2>Startup</h2>
           <p>Startup and background behavior.</p>
         </header>
 

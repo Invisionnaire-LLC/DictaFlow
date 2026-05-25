@@ -1449,7 +1449,7 @@ fn show_settings(app: AppHandle) -> tauri::Result<()> {
         "settings",
         "settings.html",
         "DictaFlow Settings",
-        580.0,
+        820.0,
         640.0,
     )
 }
