@@ -26,6 +26,14 @@ jobs:
       - name: Show CUDA version
         run: nvcc --version
 
+      # whisper-rs-sys runs bindgen, which needs libclang.dll (part of LLVM).
+      # GitHub's windows-latest ships LLVM; Blacksmith's image does not, so
+      # install it explicitly and point bindgen at it via LIBCLANG_PATH.
+      - name: Install LLVM (libclang for bindgen)
+        run: |
+          choco install llvm --no-progress -y
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
