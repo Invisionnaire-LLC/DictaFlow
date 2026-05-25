@@ -1,7 +1,7 @@
 # AGENTS.md — DictaFlow
 
 Guía para agentes (y humanos) que trabajen en este repo. Léela completa antes de tocar
-firma de código, permisos macOS, el bundle `.app`, o el selector de Ollama.
+firma de código, permisos macOS, el bundle `.app`, o el selector de motor de limpieza.
 
 ---
 
@@ -16,8 +16,8 @@ Flujo de uso:
    - **Local** (default): **Whisper** (`whisper-rs`, modelo `ggml-large-v3-turbo.bin`), offline.
    - **Cloud opcional**: **Groq** u **OpenAI** (`cloud_asr.rs`), API key en el Keychain.
    - Modos de idioma: auto / inglés / español / traducir‑a‑inglés (`LanguageMode`).
-4. Se limpia el texto: primero reglas (`cleanup/rules.rs`), luego un modelo **Ollama** local
-   (default `gemma3:1b`).
+4. Se limpia el texto: primero reglas (`cleanup/rules.rs`), luego un LLM local de limpieza —
+   **Ollama** (default, `gemma3:1b`) o **LM Studio**, seleccionable en Settings.
 5. Se **pega** el resultado en la app activa: insert por **Accessibility** (AXUIElement) con
    fallback a **`Cmd+V` sintético** (`CGEvent`, `paste.rs`). Opción de **auto‑Enter** tras pegar.
 
@@ -51,9 +51,11 @@ src-tauri/
     secrets.rs           API keys en el Keychain (Security framework) + migración
     dictionary.rs        Correcciones aprendidas (separadas del vocabulario manual)
     cleanup/
-      mod.rs             Hybrid cleaner (reglas + Ollama), setter de modelo
+      mod.rs             Hybrid cleaner (reglas + LLM), trait Cleaner, set_backend
+      prompt.rs          Prompt/strip compartido entre backends
       rules.rs           Limpieza por reglas (sin LLM)
       ollama.rs          Cliente Ollama: /api/generate y /api/tags
+      lmstudio.rs        Cliente LM Studio: /v1/chat/completions y /v1/models
     settings.rs          Persistencia de settings (JSON) + LanguageMode
     login_item.rs        LaunchAgent para "abrir al login" (macOS)
     state.rs             Estado compartido de la app
@@ -72,7 +74,7 @@ SECURITY.md              Auditoría de seguridad 1.0.0
   `get_transcription_language`, `set_transcription_language`, `get_whisper_model_status`
 - Vocabulario/diccionario: `get_vocabulary`, `set_vocabulary`, `list_dictionary`,
   `add_dictionary_entry`, `delete_dictionary_entry`
-- Cleanup (Ollama): `get_ollama_model`, `list_ollama_models`, `set_ollama_model`
+- Cleanup: `get_cleanup_config`, `list_cleanup_models`, `set_cleanup_model`, `set_cleanup_backend`
 - HUD/UX: `get_hud_style`, `set_hud_style`, `get_live_transcript`, `set_live_transcript`,
   `get_hud_always_on_top`, `set_hud_always_on_top`, `reset_hud_position`, `get_auto_submit`, `set_auto_submit`
 - Historial: `search_history`, `delete_history_entry`, `clear_history`, `update_history_entry`, `copy_text`
@@ -90,6 +92,9 @@ SECURITY.md              Auditoría de seguridad 1.0.0
   "hud_position": null, "hud_style": "classic", "hud_anchor": null,
   "live_transcript": true, "hud_always_on_top": true,
   "ollama_model": "gemma3:1b",
+  "cleanup_backend": "ollama",           // "ollama" | "lmstudio"
+  "lmstudio_model": null,                // id del modelo LM Studio (null = primero disponible)
+  "lmstudio_base_url": "http://localhost:1234/v1",
   "transcription_backend": "local",      // "local" | "groq" | "openai"
   "transcription_model": null,           // override del modelo cloud
   "transcription_language": "auto",      // "auto" | "en" | "es" | "translate_en"
@@ -293,7 +298,7 @@ o ad-hoc y avisa que Accessibility puede resetearse en cada rebuild.
 3. **`gemma3:1b` es el modelo default integrado de DictaFlow.** Trátalo como válido SIEMPRE,
    aunque `/api/tags` no lo liste. La lista de Ollama es **sugerencia, no autoridad**:
    el selector de Settings es un `<input list=...>` libre (no un `<select>`), y el backend
-   (`set_ollama_model` en `main.rs`) **no** rechaza modelos no listados. Si Ollama no
+   (`set_cleanup_model` en `main.rs`) **no** rechaza modelos no listados. Si Ollama no
    responde, el usuario igual debe poder escribir y guardar un modelo.
 
 4. **No matar la app en ejecución sin avisar.** Si necesitas reiniciarla, confírmalo primero.
