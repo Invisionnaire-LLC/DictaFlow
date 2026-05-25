@@ -12,49 +12,74 @@ Flujo de uso:
 
 1. Mantienes una hotkey global (default `Option + Space`).
 2. Hablas; el audio se graba con el micrófono.
-3. Se transcribe **localmente** con **Whisper** (`whisper-rs`, modelo `ggml-large-v3-turbo.bin`).
+3. Se transcribe. Backend seleccionable (Settings → Transcription):
+   - **Local** (default): **Whisper** (`whisper-rs`, modelo `ggml-large-v3-turbo.bin`), offline.
+   - **Cloud opcional**: **Groq** u **OpenAI** (`cloud_asr.rs`), API key en el Keychain.
+   - Modos de idioma: auto / inglés / español / traducir‑a‑inglés (`LanguageMode`).
 4. Se limpia el texto: primero reglas (`cleanup/rules.rs`), luego un modelo **Ollama** local
    (default `gemma3:1b`).
-5. Se **pega** el resultado en el cursor activo simulando `Cmd+V` (`enigo`).
+5. Se **pega** el resultado en la app activa: insert por **Accessibility** (AXUIElement) con
+   fallback a **`Cmd+V` sintético** (`CGEvent`, `paste.rs`). Opción de **auto‑Enter** tras pegar.
 
-Es un **menu-bar agent**: `LSUIElement = true`, no aparece en el Dock.
+Es un **menu-bar agent**: `LSUIElement = true`, no aparece en el Dock. Versión actual: **1.0.0**.
 
 ### Permisos macOS que necesita
 - **Micrófono** (`NSMicrophoneUsageDescription`) — para grabar.
-- **Accessibility** (`kTCCServiceAccessibility`) — para pegar (`Cmd+V` sintético vía `enigo`).
+- **Accessibility** (`kTCCServiceAccessibility`) — para pegar (AXUIElement + `Cmd+V` vía `CGEvent`).
   Si Accessibility no valida, **el paste falla en silencio** (no hay error visible).
+- **Input Monitoring** — para el modo hold/push‑to‑talk de la hotkey global.
 
 ---
 
 ## Layout del repo
 
 ```
-dist/                    UI del WebView (HTML/JS plano, sin framework)
-  settings.html          Ventana de Settings (hotkey, modelo Ollama, login, permisos, HUD)
-  hud.html               Pastilla flotante que muestra estado de grabación
-  about.html             About + logo Invisionnaire
+dist/                    UI del WebView (HTML + JS plano en archivos aparte, sin framework)
+  settings.html/.js      Panel de Settings (transcription, idioma, vocabulary, Ollama, HUD, permisos)
+  hud.html/.js           Pastilla flotante (estado + waveform; estilos classic/notch/cursor)
+  history.html/.js       Historial de dictados + edición/aprendizaje
+  about.html/.js         About + logo Invisionnaire
 src-tauri/
   src/
     main.rs              Entry point + comandos Tauri (invoke_handler)
-    asr.rs               Backend Whisper (transcripción)
-    audio.rs             Captura de micrófono
-    paste.rs             Paste sintético (Cmd+V vía enigo, corre en main thread)
+    asr.rs               Backend Whisper local + vocabulary/initial_prompt
+    cloud_asr.rs         Backends cloud Groq/OpenAI (multipart) + cap de prompt por BYTES
+    audio.rs             Captura de micrófono (16 kHz mono + DSP)
+    paste.rs             Paste: AX insert + Cmd+V (CGEvent) en main thread; detección de terminal
+    main_thread.rs       Helpers de ops de ventana en el main thread
+    hud_cursor.rs        HUD que sigue el cursor (multi‑monitor)
+    secrets.rs           API keys en el Keychain (Security framework) + migración
+    dictionary.rs        Correcciones aprendidas (separadas del vocabulario manual)
     cleanup/
       mod.rs             Hybrid cleaner (reglas + Ollama), setter de modelo
       rules.rs           Limpieza por reglas (sin LLM)
-      ollama.rs          Cliente Ollama: /api/generate y /api/tags (listado de modelos)
-    settings.rs          Persistencia de settings (JSON)
+      ollama.rs          Cliente Ollama: /api/generate y /api/tags
+    settings.rs          Persistencia de settings (JSON) + LanguageMode
     login_item.rs        LaunchAgent para "abrir al login" (macOS)
     state.rs             Estado compartido de la app
-  tauri.conf.json        Config Tauri/bundle. identifier = com.invisionnaire.dictaflow
+  tauri.conf.json            Config Tauri/bundle (Developer ID). identifier = com.invisionnaire.dictaflow
+  tauri.appstore.conf.json   Variante MAS (sandbox) — NO se usa para distribuir; ver SECURITY.md
+  Entitlements.plist / Entitlements.appstore.plist
+  Info.plist
+scripts/                 Firma Developer ID + notarización + release App Store
+docs/PRIVACY-POLICY.md   Política de privacidad
+SECURITY.md              Auditoría de seguridad 1.0.0
 ```
 
 ### Comandos Tauri expuestos (`generate_handler!`)
-`get_hotkey`, `set_hotkey`, `get_ollama_model`, `list_ollama_models`, `set_ollama_model`,
-`get_launch_at_login`, `set_launch_at_login`, `launch_at_login_supported`, `close_settings`, `hud_edit_start`,
-`hud_edit_save`, `hud_edit_cancel`, `check_accessibility`, `prompt_accessibility`,
-`open_accessibility_settings`, `open_microphone_settings`, `open_input_monitoring_settings`,
-`check_input_monitoring`, `get_whisper_model_status`.
+- Hotkey: `get_hotkey`, `set_hotkey`
+- Transcripción: `get_transcription_config`, `set_transcription_config`,
+  `get_transcription_language`, `set_transcription_language`, `get_whisper_model_status`
+- Vocabulario/diccionario: `get_vocabulary`, `set_vocabulary`, `list_dictionary`,
+  `add_dictionary_entry`, `delete_dictionary_entry`
+- Cleanup (Ollama): `get_ollama_model`, `list_ollama_models`, `set_ollama_model`
+- HUD/UX: `get_hud_style`, `set_hud_style`, `get_live_transcript`, `set_live_transcript`,
+  `get_hud_always_on_top`, `set_hud_always_on_top`, `reset_hud_position`, `get_auto_submit`, `set_auto_submit`
+- Historial: `search_history`, `delete_history_entry`, `clear_history`, `update_history_entry`, `copy_text`
+- Permisos: `check_accessibility`, `prompt_accessibility`, `open_accessibility_settings`,
+  `open_microphone_settings`, `open_input_monitoring_settings`, `check_input_monitoring`
+- Login/varios: `get_launch_at_login`, `set_launch_at_login`, `launch_at_login_supported`,
+  `close_settings`, `close_history`, `get_build_info`
 
 ### Settings persistidos
 `~/Library/Application Support/DictaFlow/settings.json`
@@ -62,11 +87,20 @@ src-tauri/
 {
   "input_device": null,
   "hotkey": { "code": "Space", "modifiers": ["Alt"] },
-  "hud_position": null,
+  "hud_position": null, "hud_style": "classic", "hud_anchor": null,
+  "live_transcript": true, "hud_always_on_top": true,
   "ollama_model": "gemma3:1b",
+  "transcription_backend": "local",      // "local" | "groq" | "openai"
+  "transcription_model": null,           // override del modelo cloud
+  "transcription_language": "auto",      // "auto" | "en" | "es" | "translate_en"
+  "auto_submit": false,
   "launch_at_login": false
 }
 ```
+> La **API key del cloud NO va aquí**: se guarda en el **Keychain** (`secrets.rs`). El campo
+> legacy `transcription_api_key` solo existe para migrar la key vieja de plaintext y luego se borra.
+> Otros archivos de datos: `vocabulary.txt` (palabras manuales) y `dictionary.json` (correcciones
+> aprendidas) — **separados a propósito** (uno no sobrescribe al otro).
 
 ---
 
@@ -76,8 +110,8 @@ Desde `src-tauri/`:
 ```bash
 cargo fmt --check
 cargo check
-cargo clippy --bins -- -D warnings   # CI trata warnings como errores
-cargo test --bins                    # ~21 tests
+cargo clippy --all-targets -- -D warnings   # CI trata warnings como errores
+cargo test                                  # ~68 tests
 cargo tauri build                    # produce el .app
 ```
 El bundle queda en `src-tauri/target/release/bundle/macos/DictaFlow.app`.
@@ -229,6 +263,16 @@ La fragilidad desaparece con **Developer ID Application** + install que no pisa 
 Con Developer ID, TCC usa `identifier "com.invisionnaire.dictaflow" and anchor apple generic ...`
 y el grant **sobrevive rebuilds**. Sin Developer ID, `install-macos.sh` usa Apple Development
 o ad-hoc y avisa que Accessibility puede resetearse en cada rebuild.
+
+> **Los certificados son por‑developer (cert + llave privada).** Firmar requiere la **llave
+> privada**, que vive solo en la Mac que creó el cert. Por eso el identity hardcodeado de un
+> dev (`Apple Development: Adrian Rosario …`) **no firma en otra Mac**: ahí no está su llave.
+> Cada quien firma con **el suyo** (p.ej. `Developer ID Application: <tu nombre> (TEAMID)`) —
+> revisa con `security find-identity -v -p codesigning`. La firma va pegada a UN binario: si
+> recompilas, es un binario nuevo sin firmar (la firma de otro dev sobre un build viejo no se
+> hereda). Compartir un `.p12` (cert+llave) es la salida fea; lo limpio es estar en el mismo
+> Apple Developer team y que cada quien genere su cert, **o** que quien tiene el cert
+> compile+firme+notarice y reparta el `.app` ya terminado.
 
 ---
 
