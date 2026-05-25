@@ -113,6 +113,15 @@ pub struct Settings {
     pub hud_anchor: Option<HudAnchor>,
     #[serde(default)]
     pub ollama_model: Option<String>,
+    /// Cleanup backend: "ollama" (default) or "lmstudio".
+    #[serde(default)]
+    pub cleanup_backend: Option<String>,
+    /// LM Studio model id (None = first available).
+    #[serde(default)]
+    pub lmstudio_model: Option<String>,
+    /// LM Studio server base URL (port varies); None = the default shown in the UI.
+    #[serde(default)]
+    pub lmstudio_base_url: Option<String>,
     /// Transcription backend: "local" (offline Whisper, default), "groq", or "openai".
     #[serde(default)]
     pub transcription_backend: Option<String>,
