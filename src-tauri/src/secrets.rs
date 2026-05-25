@@ -1,8 +1,10 @@
 //! Secure storage for cloud transcription API keys (Keychain on macOS).
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
+#[cfg(target_os = "macos")]
 const KEYCHAIN_SERVICE: &str = "com.invisionnaire.dictaflow";
+#[cfg(target_os = "macos")]
 const KEYCHAIN_ACCOUNT: &str = "transcription-api-key";
 
 #[cfg(target_os = "macos")]
@@ -17,6 +19,7 @@ pub fn get_transcription_api_key() -> String {
 
 #[cfg(target_os = "macos")]
 pub fn set_transcription_api_key(key: &str) -> Result<()> {
+    use anyhow::Context;
     use security_framework::passwords::{delete_generic_password, set_generic_password};
 
     let key = key.trim();

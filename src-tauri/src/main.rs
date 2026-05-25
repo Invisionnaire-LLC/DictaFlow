@@ -16,7 +16,11 @@ mod settings;
 mod state;
 
 use std::fs::{File, OpenOptions};
-use std::io;
+use std::io::{self, Read, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::net::UnixListener;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -188,6 +192,74 @@ fn acquire_single_instance_lock() -> io::Result<File> {
     Ok(file)
 }
 
+#[cfg(unix)]
+fn control_socket_path() -> io::Result<std::path::PathBuf> {
+    let dir = dirs::data_dir()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no app data dir"))?
+        .join("DictaFlow");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("control.sock"))
+}
+
+#[cfg(unix)]
+fn spawn_control_socket(app: AppHandle) {
+    let path = match control_socket_path() {
+        Ok(path) => path,
+        Err(e) => {
+            tracing::warn!("control socket path unavailable: {e}");
+            return;
+        }
+    };
+
+    let _ = std::fs::remove_file(&path);
+    let listener = match UnixListener::bind(&path) {
+        Ok(listener) => listener,
+        Err(e) => {
+            tracing::warn!("control socket bind failed at {}: {e}", path.display());
+            return;
+        }
+    };
+    if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+        tracing::warn!("control socket chmod failed at {}: {e}", path.display());
+    }
+
+    tracing::info!("control socket listening at {}", path.display());
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = match stream {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::warn!("control socket accept failed: {e}");
+                    continue;
+                }
+            };
+
+            let mut command = String::new();
+            if let Err(e) = stream.read_to_string(&mut command) {
+                let _ = writeln!(stream, "ERR read: {e}");
+                continue;
+            }
+
+            match command.trim() {
+                "toggle" => {
+                    let app_for_toggle = app.clone();
+                    if let Err(e) = app.run_on_main_thread(move || handle_press(app_for_toggle)) {
+                        let _ = writeln!(stream, "ERR toggle: {e}");
+                    } else {
+                        let _ = writeln!(stream, "OK");
+                    }
+                }
+                other => {
+                    let _ = writeln!(stream, "ERR unknown command: {other}");
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn spawn_control_socket(_app: AppHandle) {}
+
 fn main() {
     let _instance_lock = match acquire_single_instance_lock() {
         Ok(file) => file,
@@ -352,6 +424,7 @@ fn main() {
             build_hud(app.handle())?;
 
             spawn_rms_forwarder(app.handle().clone(), level_rx);
+            spawn_control_socket(app.handle().clone());
             spawn_initialization(app.handle().clone());
 
             Ok(())
@@ -815,19 +888,18 @@ fn auxiliary_windows_visible(app: &AppHandle) -> bool {
 }
 
 fn restore_menu_bar_activation_policy(app: &AppHandle) {
-    if auxiliary_windows_visible(app) {
-        return;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+    if !auxiliary_windows_visible(app) {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.set_activation_policy(ActivationPolicy::Accessory);
+        }
     }
 }
 
-fn present_auxiliary_window(app: &AppHandle, window: &WebviewWindow) {
+fn present_auxiliary_window(_app: &AppHandle, window: &WebviewWindow) {
     #[cfg(target_os = "macos")]
     {
-        let _ = app.set_activation_policy(ActivationPolicy::Regular);
+        let _ = _app.set_activation_policy(ActivationPolicy::Regular);
         activate_application();
     }
     let _ = window.unminimize();
@@ -1628,6 +1700,14 @@ fn set_transcription_config(
     let mut saved = settings::Settings::load();
     saved.transcription_backend = Some(parsed.as_str().to_string());
     saved.transcription_model = if model.is_empty() { None } else { Some(model) };
+    #[cfg(not(target_os = "macos"))]
+    {
+        saved.transcription_api_key = if key.is_empty() {
+            None
+        } else {
+            Some(key.clone())
+        };
+    }
     if let Err(e) = secrets::set_transcription_api_key(&key) {
         tracing::warn!("could not store transcription API key: {:?}", e);
     }

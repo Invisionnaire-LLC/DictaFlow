@@ -117,7 +117,8 @@ pub struct Settings {
     #[serde(default)]
     pub transcription_backend: Option<String>,
     /// Legacy field — migrated to Keychain on macOS; never written on save.
-    #[serde(default, skip_serializing)]
+    #[cfg_attr(target_os = "macos", serde(default, skip_serializing))]
+    #[cfg_attr(not(target_os = "macos"), serde(default))]
     pub transcription_api_key: Option<String>,
     /// Optional model override for the cloud backend (provider default used when empty).
     #[serde(default)]
@@ -143,7 +144,9 @@ impl Settings {
     /// Persist settings under an exclusive lock (all writes must go through here).
     pub fn save(&self) -> Result<()> {
         let mut replacement = self.clone();
-        replacement.transcription_api_key = None;
+        if cfg!(target_os = "macos") {
+            replacement.transcription_api_key = None;
+        }
         Self::update(|saved| *saved = replacement)
     }
 
@@ -170,7 +173,9 @@ impl Settings {
 
         let mut settings = read_settings_file(&path).unwrap_or_default();
         patch(&mut settings);
-        settings.transcription_api_key = None;
+        if cfg!(target_os = "macos") {
+            settings.transcription_api_key = None;
+        }
         let json = serde_json::to_string_pretty(&settings)?;
         write_atomic(&path, &json)?;
         tracing::info!("settings updated at {}", path.display());

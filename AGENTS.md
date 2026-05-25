@@ -106,6 +106,9 @@ SECURITY.md              Auditoría de seguridad 1.0.0
 
 ## Verificación / build
 
+Linux/Wayland notes live in [LINUX.md](LINUX.md). Read that file before changing Linux
+hotkeys, paste behavior, Groq/OpenAI settings persistence, or the Linux Whisper backend.
+
 Desde `src-tauri/`:
 ```bash
 cargo fmt --check
