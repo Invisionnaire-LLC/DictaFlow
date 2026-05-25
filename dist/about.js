@@ -19,9 +19,11 @@
     document.getElementById("buildHash").textContent = info.git_hash;
   } catch (_) {}
 
-  invoke("get_ollama_model")
-    .then((model) => {
-      document.getElementById("ollamaModel").textContent = model;
+  invoke("get_cleanup_config")
+    .then((cfg) => {
+      const model = cfg.resolved_model || cfg.model || "";
+      const label = cfg.backend === "lmstudio" ? `LM Studio: ${model}` : model;
+      document.getElementById("ollamaModel").textContent = label;
     })
     .catch(() => {});
 
