@@ -1584,7 +1584,7 @@ fn get_ollama_model(app: AppHandle) -> String {
 }
 
 #[tauri::command]
-fn list_ollama_models(app: AppHandle) -> Result<Vec<cleanup::ollama::OllamaModel>, String> {
+fn list_ollama_models(app: AppHandle) -> Result<Vec<cleanup::ModelInfo>, String> {
     let ctx = app
         .try_state::<AppContext>()
         .ok_or_else(|| "app context missing".to_string())?;

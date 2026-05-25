@@ -4,7 +4,28 @@ pub mod rules;
 
 use std::time::Duration;
 
+use anyhow::Result;
+use serde::Serialize;
+
 use self::ollama::OllamaCleaner;
+
+/// A model offered by a cleanup backend. `size` is 0 when the backend doesn't
+/// report it (LM Studio's `/v1/models` has no size field).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelInfo {
+    pub name: String,
+    pub size: u64,
+}
+
+/// A local LLM that polishes text. Ollama and LM Studio play the same role and
+/// differ only in wire protocol.
+pub trait Cleaner: Send + Sync {
+    fn clean(&self, raw: &str) -> Result<String>;
+    fn warmup(&self) -> Result<()>;
+    fn model(&self) -> String;
+    fn set_model(&self, model: String);
+    fn list_models(&self) -> Result<Vec<ModelInfo>>;
+}
 
 /// Composes deterministic rules with an LLM pass. If the LLM fails or times
 /// out, returns the rules-cleaned output. User always gets something back.
@@ -27,7 +48,7 @@ impl HybridCleaner {
         self.ollama.set_model(model);
     }
 
-    pub fn list_ollama_models(&self) -> anyhow::Result<Vec<ollama::OllamaModel>> {
+    pub fn list_ollama_models(&self) -> anyhow::Result<Vec<ModelInfo>> {
         self.ollama.list_models()
     }
 

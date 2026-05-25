@@ -6,6 +6,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 
 use super::prompt::{build_prompt, num_predict_cap, strip_preamble};
+use super::{Cleaner, ModelInfo};
 
 pub const ENDPOINT: &str = "http://127.0.0.1:11434/api/generate";
 pub const TAGS_ENDPOINT: &str = "http://127.0.0.1:11434/api/tags";
@@ -29,12 +30,6 @@ struct GenerateOptions {
 #[derive(Deserialize)]
 struct GenerateResponse {
     response: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct OllamaModel {
-    pub name: String,
-    pub size: u64,
 }
 
 #[derive(Deserialize)]
@@ -64,20 +59,22 @@ impl OllamaCleaner {
             model: RwLock::new(model),
         }
     }
+}
 
-    pub fn model(&self) -> String {
+impl Cleaner for OllamaCleaner {
+    fn model(&self) -> String {
         self.model.read().clone()
     }
 
-    pub fn set_model(&self, model: String) {
+    fn set_model(&self, model: String) {
         *self.model.write() = model;
     }
 
-    pub fn list_models(&self) -> Result<Vec<OllamaModel>> {
+    fn list_models(&self) -> Result<Vec<ModelInfo>> {
         list_models_with_client(&self.client)
     }
 
-    pub fn clean(&self, raw_text: &str) -> Result<String> {
+    fn clean(&self, raw_text: &str) -> Result<String> {
         let model = self.model();
         let body = GenerateRequest {
             model: &model,
@@ -110,22 +107,22 @@ impl OllamaCleaner {
     }
 
     /// Warmup — fire a cheap request to pin the model in RAM.
-    pub fn warmup(&self) -> Result<()> {
+    fn warmup(&self) -> Result<()> {
         let _ = self.clean("hello")?;
         Ok(())
     }
 }
 
-fn list_models_with_client(client: &Client) -> Result<Vec<OllamaModel>> {
+fn list_models_with_client(client: &Client) -> Result<Vec<ModelInfo>> {
     let resp = client.get(TAGS_ENDPOINT).send().context("ollama tags")?;
     if !resp.status().is_success() {
         return Err(anyhow!("ollama tags http status {}", resp.status()));
     }
     let decoded: TagsResponse = resp.json().context("ollama tags decode")?;
-    let mut models: Vec<OllamaModel> = decoded
+    let mut models: Vec<ModelInfo> = decoded
         .models
         .into_iter()
-        .map(|m| OllamaModel {
+        .map(|m| ModelInfo {
             name: m.name,
             size: m.size.unwrap_or_default(),
         })
