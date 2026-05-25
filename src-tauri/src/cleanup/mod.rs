@@ -1,4 +1,5 @@
 pub mod ollama;
+pub mod prompt;
 pub mod rules;
 
 use std::time::Duration;
