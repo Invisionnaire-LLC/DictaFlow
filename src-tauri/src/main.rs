@@ -369,13 +369,47 @@ fn build_menu<R: Runtime>(
     app: &AppHandle<R>,
     current_device: Option<&str>,
 ) -> tauri::Result<Menu<R>> {
+    let current_language = current_language_mode();
     let about_item = MenuItem::with_id(app, "about", "About DictaFlow", true, None::<&str>)?;
     let history_item = MenuItem::with_id(app, "history", "History…", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let auto_language_item = CheckMenuItem::with_id(
+        app,
+        "lang:auto",
+        "Auto",
+        true,
+        current_language == settings::LanguageMode::Auto,
+        None::<&str>,
+    )?;
+    let spanish_language_item = CheckMenuItem::with_id(
+        app,
+        "lang:es",
+        "Español",
+        true,
+        current_language == settings::LanguageMode::Spanish,
+        None::<&str>,
+    )?;
+    let english_language_item = CheckMenuItem::with_id(
+        app,
+        "lang:en",
+        "English",
+        true,
+        current_language == settings::LanguageMode::English,
+        None::<&str>,
+    )?;
+    let translate_language_item = CheckMenuItem::with_id(
+        app,
+        "lang:translate_en",
+        "Translate",
+        true,
+        current_language == settings::LanguageMode::TranslateEnglish,
+        None::<&str>,
+    )?;
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
     let sep3 = PredefinedMenuItem::separator(app)?;
+    let sep4 = PredefinedMenuItem::separator(app)?;
 
     let default_mic = CheckMenuItem::with_id(
         app,
@@ -412,11 +446,16 @@ fn build_menu<R: Runtime>(
         &[
             &about_item,
             &sep1,
-            &mic_submenu,
+            &auto_language_item,
+            &spanish_language_item,
+            &english_language_item,
+            &translate_language_item,
             &sep2,
+            &mic_submenu,
+            &sep3,
             &history_item,
             &settings_item,
-            &sep3,
+            &sep4,
             &quit_item,
         ],
     )
@@ -460,6 +499,20 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     }
                 }
                 "quit" => app.exit(0),
+                id if id.starts_with("lang:") => {
+                    let mode = settings::LanguageMode::parse(&id["lang:".len()..]);
+                    match settings::Settings::update(|saved| {
+                        saved.transcription_language = Some(mode.as_str().to_string());
+                    }) {
+                        Ok(()) => {
+                            tracing::info!("transcription language set to '{}'", mode.as_str())
+                        }
+                        Err(e) => tracing::warn!("could not save language: {:?}", e),
+                    }
+                    if let Err(e) = refresh_tray_menu(app) {
+                        tracing::warn!("could not refresh tray menu: {:?}", e);
+                    }
+                }
                 id if id.starts_with("mic:") => {
                     let name = &id["mic:".len()..];
                     let selection = if name == "default" {
