@@ -1,3 +1,4 @@
+pub mod lmstudio;
 pub mod ollama;
 pub mod prompt;
 pub mod rules;
