@@ -385,7 +385,7 @@ fn build_menu<R: Runtime>(
     let spanish_language_item = CheckMenuItem::with_id(
         app,
         "lang:es",
-        "Español",
+        "Español (Focus)",
         true,
         current_language == settings::LanguageMode::Spanish,
         None::<&str>,
@@ -393,7 +393,7 @@ fn build_menu<R: Runtime>(
     let english_language_item = CheckMenuItem::with_id(
         app,
         "lang:en",
-        "English",
+        "English (Focus)",
         true,
         current_language == settings::LanguageMode::English,
         None::<&str>,
