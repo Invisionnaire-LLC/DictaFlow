@@ -126,72 +126,6 @@
     #preview span { display: inline-block; }
     body[data-layout="expanded"][data-live-transcript="on"] #preview { display: block; }
 
-    #learn-toast {
-      display: none;
-      flex: 1 1 auto;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-      order: 0;
-    }
-    #learn-toast .learn-toast-icon {
-      flex: 0 0 auto;
-      width: 18px;
-      height: 18px;
-      border-radius: 50%;
-      background: rgba(125, 206, 160, 0.18);
-      color: #7dcea0;
-      font-size: 11px;
-      font-weight: 700;
-      line-height: 18px;
-      text-align: center;
-    }
-    #learn-toast .learn-toast-copy {
-      min-width: 0;
-      display: flex;
-      flex-direction: column;
-      gap: 1px;
-    }
-    #learn-toast .learn-toast-title {
-      font-size: 11px;
-      font-weight: 600;
-      line-height: 1.2;
-      color: rgba(255, 255, 255, 0.96);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    #learn-toast .learn-toast-detail {
-      font-size: 10px;
-      line-height: 1.15;
-      color: rgba(255, 255, 255, 0.68);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    body[data-toast="learn"] #learn-toast { display: flex; }
-    body[data-toast="learn"] #preview,
-    body[data-toast="learn"] #bars,
-    body[data-toast="learn"] #spinner { display: none !important; }
-    body[data-toast="learn"] .pill {
-      width: 100% !important;
-      min-width: 220px;
-      max-width: 280px;
-      opacity: 1 !important;
-      justify-content: flex-start;
-      padding: 0 8px;
-      gap: 6px;
-      background: rgba(20, 26, 22, 0.94);
-      border: 1px solid rgba(125, 206, 160, 0.28);
-      animation: toast-in 0.18s var(--ease);
-    }
-    body[data-toast="learn"][data-style="notch"] .pill {
-      border-radius: 0 0 0 14px;
-    }
-    @keyframes toast-in {
-      from { opacity: 0.4; transform: translateY(3px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
     body[data-layout="expanded"][data-style="classic"][data-live-transcript="on"] #bars {
       display: none;
     }
@@ -271,13 +205,6 @@
 <body data-state="idle" data-layout="compact" data-style="notch" data-live-transcript="on">
   <div class="shell">
     <div class="pill">
-      <div id="learn-toast" aria-live="polite">
-        <div class="learn-toast-icon" aria-hidden="true">✓</div>
-        <div class="learn-toast-copy">
-          <span class="learn-toast-title"></span>
-          <span class="learn-toast-detail"></span>
-        </div>
-      </div>
       <div id="download-label" aria-live="polite">DL 0%</div>
       <div id="preview" class="empty"><span>Listening…</span></div>
       <div id="bars">

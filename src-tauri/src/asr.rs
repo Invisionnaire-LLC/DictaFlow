@@ -261,7 +261,7 @@ pub fn write_vocabulary(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// The Whisper initial prompt: custom vocabulary plus learned dictionary terms.
+/// The Whisper initial prompt: custom vocabulary plus dictionary terms.
 /// Read fresh each call so edits apply without restarting the app.
 pub fn initial_prompt() -> String {
     let mut parts: Vec<String> = Vec::new();

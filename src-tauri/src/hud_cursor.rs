@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
+use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition, WebviewWindow};
 
 pub const STYLE: &str = "cursor";
 
@@ -127,53 +127,6 @@ pub fn stop_follow(app: &AppHandle) {
             cancel.store(true, Ordering::Relaxed);
         }
     }
-}
-
-/// Briefly show the HUD so vocabulary-learn toasts are visible.
-pub fn show_vocab_toast(app: &AppHandle) {
-    let style = crate::hud_style();
-    let cursor = is_cursor_style(&style);
-    let show_app = app.clone();
-    let _ = show_app.clone().run_on_main_thread(move || {
-        if let Some(hud) = show_app.get_webview_window("hud") {
-            if cursor {
-                let _ = hud.set_size(LogicalSize::new(260.0, 44.0));
-                position_hud_at_cursor(&hud);
-            }
-            let _ = hud.show();
-        }
-    });
-
-    if !cursor {
-        return;
-    }
-
-    let hide_app = app.clone();
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(3200));
-        let hide_app = hide_app.clone();
-        let _ = hide_app.clone().run_on_main_thread(move || {
-            if !is_cursor_style(&crate::hud_style()) {
-                return;
-            }
-            let recording = hide_app
-                .try_state::<crate::AppContext>()
-                .map(|ctx| *ctx.state.lock() == crate::state::AppState::Recording)
-                .unwrap_or(false);
-            if recording {
-                return;
-            }
-            if let Some(hud) = hide_app.get_webview_window("hud") {
-                let _ = hud.set_size(LogicalSize::new(HUD_W_LOGICAL, HUD_H_LOGICAL));
-                let _ = hud.hide();
-            }
-        });
-    });
-}
-
-pub fn notify_word_learned(app: &AppHandle, update: &crate::dictionary::LearnedUpdate) {
-    show_vocab_toast(app);
-    let _ = app.emit("word_learned", update);
 }
 
 fn hud_size_physical(scale: f64) -> (i32, i32) {

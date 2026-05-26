@@ -1,34 +1,10 @@
     const body = document.body;
     const previewEl = document.getElementById('preview');
     const previewTextEl = previewEl.querySelector('span');
-    const learnToastEl = document.getElementById('learn-toast');
-    const learnToastTitleEl = learnToastEl.querySelector('.learn-toast-title');
-    const learnToastDetailEl = learnToastEl.querySelector('.learn-toast-detail');
     const downloadLabelEl = document.getElementById('download-label');
     const bars = document.querySelectorAll('.bar');
     let currentRms = 0;
     let smoothed = 0;
-    let learnToastTimer = null;
-
-    function showLearnToast(from, to) {
-      const label = String(from || '').trim();
-      const replacement = String(to || '').trim();
-      if (!label || !replacement) return;
-
-      learnToastTitleEl.textContent = `"${label}" was learned`;
-      learnToastDetailEl.textContent = `Will use "${replacement}" next time`;
-      body.dataset.toast = 'learn';
-      body.dataset.layout = 'expanded';
-
-      if (learnToastTimer) clearTimeout(learnToastTimer);
-      learnToastTimer = setTimeout(() => {
-        body.dataset.toast = '';
-        if (body.dataset.state === 'idle' && body.dataset.liveTranscript !== 'on') {
-          body.dataset.layout = 'compact';
-        }
-        learnToastTimer = null;
-      }, 3200);
-    }
 
     function setPreview(text) {
       const trimmed = String(text || '').trim();
@@ -129,11 +105,6 @@
       await listen('hud_style', (e) => {
         const style = String(e.payload);
         body.dataset.style = style === 'classic' || style === 'cursor' ? style : 'notch';
-      });
-      await listen('word_learned', (e) => {
-        const item = e.payload || {};
-        if (!item.from || !item.to) return;
-        showLearnToast(item.from, item.to);
       });
       await listen('model_download_start', () => setDownloadProgress(0));
       await listen('model_download_progress', (e) => setDownloadProgress(e.payload));

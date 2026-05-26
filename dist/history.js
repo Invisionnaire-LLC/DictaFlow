@@ -43,7 +43,7 @@
           <textarea class="entry-edit" data-id="${escapeHtml(e.id)}">${escapeHtml(e.cleaned)}</textarea>
           ${e.raw !== e.cleaned ? `<div class="entry-raw">${escapeHtml(e.raw)}</div>` : ''}
           <div class="entry-actions">
-            <button data-action="save-learn" data-id="${escapeHtml(e.id)}">Save and learn</button>
+            <button data-action="save" data-id="${escapeHtml(e.id)}">Save</button>
             <button data-action="copy-cleaned" data-id="${escapeHtml(e.id)}">Copy cleaned</button>
             <button data-action="copy-raw" data-id="${escapeHtml(e.id)}">Copy raw</button>
             <button data-action="delete" data-id="${escapeHtml(e.id)}" class="danger">Delete</button>
@@ -76,15 +76,11 @@
       if (!entry) return;
 
       try {
-        if (btn.dataset.action === 'save-learn') {
+        if (btn.dataset.action === 'save') {
           const textarea = listEl.querySelector(`textarea.entry-edit[data-id="${CSS.escape(id)}"]`);
           const text = textarea ? textarea.value.trim() : entry.cleaned;
-          const learned = await invoke('update_history_entry', { id, cleaned: text });
-          if (Array.isArray(learned) && learned.length) {
-            setMsg(`Learned: ${learned.map((x) => `${x.from} → ${x.to}`).join(', ')}`, 'ok');
-          } else {
-            setMsg('Saved.', 'ok');
-          }
+          await invoke('update_history_entry', { id, cleaned: text });
+          setMsg('Saved.', 'ok');
           await refresh();
         } else if (btn.dataset.action === 'copy-cleaned') {
           await invoke('copy_text', { text: entry.cleaned });

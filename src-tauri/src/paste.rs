@@ -6,16 +6,6 @@ use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
 use tauri::AppHandle;
 
-#[cfg(target_os = "macos")]
-pub fn read_focused_field_text(target_pid: Option<i32>) -> Option<String> {
-    macos::read_focused_text(target_pid)
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn read_focused_field_text(_target_pid: Option<i32>) -> Option<String> {
-    None
-}
-
 pub fn paste(app: &AppHandle, text: &str, target_pid: Option<i32>) -> Result<()> {
     let text = text.to_string();
     let (tx, rx) = mpsc::channel();
@@ -283,135 +273,6 @@ fn classify_paste_result(
     }
 
     PasteOutcome::Confirmed
-}
-
-pub fn try_learn_from_field_edit(
-    pasted: &str,
-    before: Option<&str>,
-    after: &str,
-) -> Result<Vec<crate::dictionary::LearnedUpdate>> {
-    let pasted = pasted.trim();
-    let after = after.trim();
-    if pasted.is_empty() || after.is_empty() || pasted == after {
-        return Ok(Vec::new());
-    }
-
-    let before = before.map(str::trim).unwrap_or("");
-    let post_paste = synthetic_after_paste(before, pasted);
-    if post_paste.trim() == after {
-        return Ok(Vec::new());
-    }
-
-    if tokenize_words(&post_paste).len() == tokenize_words(after).len() {
-        let learned = crate::dictionary::learn_from_edit(&post_paste, after)?;
-        if !learned.is_empty() {
-            return Ok(learned);
-        }
-    }
-
-    if !before.is_empty() {
-        if let Some(rest) = after.strip_prefix(before) {
-            let suffix = rest.trim();
-            if !suffix.is_empty() && suffix != pasted {
-                return crate::dictionary::learn_from_edit(pasted, suffix);
-            }
-        }
-    }
-
-    if let Ok(learned) = crate::dictionary::learn_pasted_in_context(pasted, after) {
-        if !learned.is_empty() {
-            return Ok(learned);
-        }
-    }
-
-    if !before.is_empty() && after.starts_with(before) {
-        let suffix = after[before.len()..].trim();
-        if !suffix.is_empty() && suffix != pasted {
-            return crate::dictionary::learn_from_edit(pasted, suffix);
-        }
-    }
-
-    if before.is_empty() && after.starts_with(pasted) {
-        return crate::dictionary::learn_from_edit(pasted, after);
-    }
-
-    Ok(Vec::new())
-}
-
-fn tokenize_words(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .filter(|w| !w.is_empty())
-        .map(str::to_string)
-        .collect()
-}
-
-fn synthetic_after_paste(before: &str, pasted: &str) -> String {
-    if before.is_empty() {
-        return pasted.to_string();
-    }
-    if before.ends_with(pasted) {
-        return before.to_string();
-    }
-    if before.ends_with(' ') || pasted.starts_with(|c: char| c.is_ascii_punctuation()) {
-        format!("{before}{pasted}")
-    } else {
-        format!("{before} {pasted}")
-    }
-}
-
-pub fn spawn_edit_learning_watch(
-    app: AppHandle,
-    pasted: String,
-    before: Option<String>,
-    target_pid: Option<i32>,
-) {
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(1500));
-        let mut stable: Option<String> = None;
-        let mut stable_count = 0;
-        for attempt in 0..30 {
-            let current = read_focused_field_text(target_pid);
-            if let Some(field) = current {
-                let trimmed = field.trim().to_string();
-                if stable.as_deref() == Some(trimmed.as_str()) {
-                    stable_count += 1;
-                    if stable_count >= 2 {
-                        match try_learn_from_field_edit(&pasted, before.as_deref(), &trimmed) {
-                            Ok(learned) if !learned.is_empty() => {
-                                for update in learned {
-                                    tracing::info!(
-                                        "learned replacement: {} -> {}",
-                                        update.from,
-                                        update.to
-                                    );
-                                    crate::hud_cursor::notify_word_learned(&app, &update);
-                                }
-                            }
-                            Ok(_) => {
-                                tracing::debug!(
-                                    "edit watch: no learnable diff (pasted={:?}, after={:?})",
-                                    pasted,
-                                    trimmed
-                                );
-                            }
-                            Err(e) => tracing::warn!("edit watch learn failed: {:?}", e),
-                        }
-                        return;
-                    }
-                } else {
-                    stable = Some(trimmed);
-                    stable_count = 1;
-                }
-            } else if attempt == 0 {
-                tracing::debug!(
-                    "edit watch: focused field not readable (pid={:?})",
-                    target_pid
-                );
-            }
-            thread::sleep(Duration::from_millis(450));
-        }
-        tracing::debug!("edit watch: timed out without stable field text");
-    });
 }
 
 #[cfg(target_os = "macos")]
@@ -817,7 +678,7 @@ mod macos {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_paste_result, try_learn_from_field_edit, PasteOutcome};
+    use super::{classify_paste_result, PasteOutcome};
 
     #[test]
     fn confirmed_when_text_appears() {
@@ -844,52 +705,6 @@ mod tests {
     }
 
     #[test]
-    fn learns_suffix_after_prefix() {
-        let learned = try_learn_from_field_edit(
-            "Talk to Mackenzie today",
-            Some("Hello. "),
-            "Hello. Talk to McKenzie today",
-        )
-        .unwrap();
-        assert_eq!(learned.len(), 1);
-        assert_eq!(learned[0].from, "Mackenzie");
-    }
-
-    #[test]
-    fn learns_cloud_to_claude_as_phrase() {
-        let learned = try_learn_from_field_edit(
-            "Let's use cloud for this",
-            Some(""),
-            "Let's use Claude for this",
-        )
-        .unwrap();
-        assert_eq!(learned.len(), 1);
-        assert_eq!(learned[0].from, "use cloud");
-        assert_eq!(learned[0].to, "use Claude");
-    }
-
-    #[test]
-    fn learns_cloud_to_claude_inside_larger_field_without_prefix() {
-        let learned = try_learn_from_field_edit(
-            "Let's use cloud for this",
-            None,
-            "Earlier note. Let's use Claude for this.",
-        )
-        .unwrap();
-        assert_eq!(learned.len(), 1);
-        assert_eq!(learned[0].from, "use cloud");
-        assert_eq!(learned[0].to, "use Claude");
-    }
-
-    #[test]
-    fn learns_merged_brand_name() {
-        let learned = try_learn_from_field_edit("whiz pop", Some(""), "WizPop").unwrap();
-        assert_eq!(learned.len(), 1);
-        assert_eq!(learned[0].from, "whiz pop");
-        assert_eq!(learned[0].to, "WizPop");
-    }
-
-    #[test]
     fn restores_clipboard_only_when_paste_confirmed() {
         assert!(super::should_restore_previous_clipboard(
             PasteOutcome::Confirmed
@@ -900,14 +715,6 @@ mod tests {
         assert!(!super::should_restore_previous_clipboard(
             PasteOutcome::Failed
         ));
-    }
-
-    #[test]
-    fn synthetic_after_paste_joins_with_space() {
-        assert_eq!(
-            super::synthetic_after_paste("Hello.", "whiz pop"),
-            "Hello. whiz pop"
-        );
     }
 
     #[cfg(target_os = "macos")]

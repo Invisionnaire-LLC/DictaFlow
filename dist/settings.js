@@ -907,13 +907,4 @@
 
     loadBuildInfo();
     refreshCursorHudStatus();
-
-    if (window.__TAURI__?.event?.listen) {
-      window.__TAURI__.event.listen("word_learned", () => {
-        const vocabPanel = document.getElementById("panel-vocabulary");
-        if (vocabPanel && vocabPanel.classList.contains("active")) {
-          loadDictionary();
-        }
-      });
-    }
 })();

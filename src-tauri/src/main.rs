@@ -45,7 +45,6 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 
 use crate::audio::{AudioController, PcmBuffer, MIN_DURATION_SECS};
 use crate::cleanup::HybridCleaner;
-use crate::dictionary::LearnedUpdate;
 use crate::settings::{Hotkey, HudAnchor, HudPosition, DEFAULT_OLLAMA_MODEL};
 use crate::state::AppState;
 
@@ -1486,27 +1485,15 @@ fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn update_history_entry(
-    app: AppHandle,
-    id: String,
-    cleaned: String,
-) -> Result<Vec<LearnedUpdate>, String> {
+fn update_history_entry(id: String, cleaned: String) -> Result<(), String> {
     let cleaned = cleaned.trim().to_string();
     if cleaned.is_empty() {
         return Err("text cannot be empty".into());
     }
-    let (before, _updated) = history::update_cleaned(&id, &cleaned)
+    history::update_cleaned(&id, &cleaned)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "history entry not found".to_string())?;
-    let learned = dictionary::learn_from_edit(&before, &cleaned).map_err(|e| e.to_string())?;
-    for update in &learned {
-        emit_word_learned(&app, update);
-    }
-    Ok(learned)
-}
-
-fn emit_word_learned(app: &AppHandle, update: &LearnedUpdate) {
-    hud_cursor::notify_word_learned(app, update);
+    Ok(())
 }
 
 #[tauri::command]
@@ -2273,8 +2260,6 @@ fn finish_recording(app: AppHandle) {
             .map(|ctx| *ctx.paste_target_pid.lock())
             .unwrap_or(None);
 
-        let before_field = paste::read_focused_field_text(target_pid);
-
         if let Err(e) = paste::paste(&app_clone, &cleaned, target_pid) {
             tracing::error!("paste: {:?}", e);
             set_state(&app_clone, AppState::Error);
@@ -2283,18 +2268,11 @@ fn finish_recording(app: AppHandle) {
         }
 
         if settings::Settings::load().auto_submit {
-            // Submit immediately (chat-style). Skip edit-learning since the field clears.
+            // Submit immediately (chat-style).
             thread::sleep(Duration::from_millis(120));
             if let Err(e) = paste::press_enter(&app_clone) {
                 tracing::warn!("auto-submit enter failed: {:?}", e);
             }
-        } else {
-            paste::spawn_edit_learning_watch(
-                app_clone.clone(),
-                cleaned.clone(),
-                before_field,
-                target_pid,
-            );
         }
 
         if let Some(ctx) = app_clone.try_state::<AppContext>() {
