@@ -533,7 +533,6 @@
     });
 
     const axStatusEl = document.getElementById("axStatus");
-    const imStatusEl = document.getElementById("imStatus");
 
     async function refreshAx() {
       axStatusEl.textContent = "Checking…";
@@ -553,26 +552,8 @@
       }
     }
 
-    async function refreshInputMonitoring() {
-      imStatusEl.textContent = "Checking…";
-      imStatusEl.className = "badge pending";
-      try {
-        const granted = await invoke("check_input_monitoring");
-        if (granted) {
-          imStatusEl.textContent = "Granted";
-          imStatusEl.className = "badge ok";
-        } else {
-          imStatusEl.textContent = "Not granted";
-          imStatusEl.className = "badge err";
-        }
-      } catch (e) {
-        imStatusEl.textContent = "Error checking";
-        imStatusEl.className = "badge err";
-      }
-    }
-
     async function refreshPermissions() {
-      await Promise.all([refreshAx(), refreshInputMonitoring()]);
+      await refreshAx();
     }
     refreshPermissions();
 
@@ -587,9 +568,6 @@
     document.getElementById("axRecheck").addEventListener("click", refreshPermissions);
     document.getElementById("axOpen").addEventListener("click", () => {
       invoke("open_accessibility_settings").catch(() => {});
-    });
-    document.getElementById("imOpen").addEventListener("click", () => {
-      invoke("open_input_monitoring_settings").catch(() => {});
     });
     document.getElementById("micOpen").addEventListener("click", () => {
       invoke("open_microphone_settings").catch(() => {});

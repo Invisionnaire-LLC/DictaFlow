@@ -767,7 +767,7 @@
       <section id="panel-permissions" class="panel" aria-labelledby="nav-permissions">
         <header class="panel-head">
           <h2>Permissions</h2>
-          <p>DictaFlow needs Microphone, Accessibility, and Input Monitoring for dictation.</p>
+          <p>DictaFlow needs Microphone and Accessibility for dictation.</p>
         </header>
 
         <div class="card">
@@ -776,19 +776,16 @@
             <span class="field-label">Accessibility</span>
             <div id="axStatus" class="badge pending">Checking…</div>
           </div>
-          <div class="field">
-            <span class="field-label">Input Monitoring</span>
-            <div id="imStatus" class="badge pending">Checking…</div>
-          </div>
           <div class="btn-row">
             <button id="axRequest" class="primary" type="button">Request Accessibility</button>
             <button id="axRecheck" type="button">Re-check</button>
             <button id="axOpen" type="button">Accessibility Settings</button>
-            <button id="imOpen" type="button">Input Monitoring Settings</button>
             <button id="micOpen" type="button">Microphone Settings</button>
           </div>
           <p class="hint">
-            First time: enable all three in System Settings. Click <b>Request Accessibility</b>, then toggle <b>DictaFlow</b> on for Accessibility and Input Monitoring. Microphone is prompted when you first dictate.
+            First time: click <b>Request Accessibility</b>, then toggle <b>DictaFlow</b> on in
+            System Settings (needed to paste at your cursor). Microphone is prompted when you
+            first dictate.
           </p>
         </div>
       </section>

@@ -27,7 +27,9 @@ Es un **menu-bar agent**: `LSUIElement = true`, no aparece en el Dock. Versión 
 - **Micrófono** (`NSMicrophoneUsageDescription`) — para grabar.
 - **Accessibility** (`kTCCServiceAccessibility`) — para pegar (AXUIElement + `Cmd+V` vía `CGEvent`).
   Si Accessibility no valida, **el paste falla en silencio** (no hay error visible).
-- **Input Monitoring** — para el modo hold/push‑to‑talk de la hotkey global.
+  La hotkey usa el plugin de global shortcut (Carbon), que da press/release **sin** Input
+  Monitoring, y el paste postea CGEvents (requiere Accessibility, no Input Monitoring). Por eso
+  Input Monitoring **no** es necesario y se quitó de la UI de permisos.
 
 ---
 
