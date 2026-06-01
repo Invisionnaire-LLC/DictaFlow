@@ -359,3 +359,36 @@ pub fn download_model<F: FnMut(u64, u64)>(mut progress: F) -> Result<PathBuf> {
     tracing::info!("whisper model ready: {} bytes", downloaded);
     Ok(dest)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flags_known_youtube_hallucinations() {
+        assert!(looks_like_partial_hallucination("Thanks for watching!"));
+        assert!(looks_like_partial_hallucination("Please subscribe"));
+        assert!(looks_like_partial_hallucination(
+            "Subtitles by the community"
+        ));
+        assert!(looks_like_partial_hallucination("visit www.example"));
+        assert!(looks_like_partial_hallucination("[Music]"));
+    }
+
+    #[test]
+    fn allows_normal_speech() {
+        assert!(!looks_like_partial_hallucination(
+            "Let's ship the audit fixes today."
+        ));
+        assert!(!looks_like_partial_hallucination("Bayamón y Guaynabo"));
+        assert!(!looks_like_partial_hallucination(""));
+    }
+
+    #[test]
+    fn tail_has_speech_detects_energy_above_silence() {
+        let silence = vec![0.0_f32; 16_000];
+        assert!(!tail_has_speech(&silence));
+        let loud = vec![0.5_f32; 16_000];
+        assert!(tail_has_speech(&loud));
+    }
+}
