@@ -1,10 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use regex::{NoExpand, RegexBuilder};
+use regex::{NoExpand, Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 
 const MAX_REPLACEMENTS: usize = 200;
@@ -23,6 +24,48 @@ struct DictionaryFile {
 }
 
 static DICT: Lazy<Mutex<DictionaryFile>> = Lazy::new(|| Mutex::new(DictionaryFile::load()));
+
+/// Bumped whenever the dictionary mutates, so the compiled-regex cache rebuilds lazily.
+static DICT_GEN: AtomicU64 = AtomicU64::new(0);
+
+struct CompiledReplacement {
+    re: Regex,
+    to: String,
+}
+
+/// `(generation, compiled)` — rebuilt only when `DICT_GEN` changes, so we don't recompile
+/// every regex on every transcription.
+static REGEX_CACHE: Lazy<Mutex<(u64, Vec<CompiledReplacement>)>> =
+    Lazy::new(|| Mutex::new((u64::MAX, Vec::new())));
+
+fn bump_dictionary_generation() {
+    DICT_GEN.fetch_add(1, Ordering::Release);
+}
+
+/// Snapshot the dictionary and compile each replacement into a `\b…\b` regex once.
+fn compile_replacements() -> Vec<CompiledReplacement> {
+    let mut ordered = {
+        let dict = DICT.lock();
+        dict.replacements.clone()
+    };
+    // Longest `from` first so multi-word phrases win over their sub-words.
+    ordered.sort_by_key(|r| std::cmp::Reverse(r.from.len()));
+
+    let mut compiled = Vec::new();
+    for rep in ordered {
+        if rep.from.is_empty() || rep.from.eq_ignore_ascii_case(&rep.to) {
+            continue;
+        }
+        if is_ambiguous_common_word(&rep.from) && !rep.from.contains(' ') {
+            continue;
+        }
+        let pattern = format!(r"(?i)\b{}\b", regex::escape(&rep.from));
+        if let Ok(re) = RegexBuilder::new(&pattern).build() {
+            compiled.push(CompiledReplacement { re, to: rep.to });
+        }
+    }
+    compiled
+}
 
 impl DictionaryFile {
     fn load() -> Self {
@@ -63,26 +106,18 @@ impl DictionaryFile {
 }
 
 pub fn apply_replacements(text: &str) -> String {
-    let dict = DICT.lock();
-    if dict.replacements.is_empty() {
+    let generation = DICT_GEN.load(Ordering::Acquire);
+    let mut cache = REGEX_CACHE.lock();
+    if cache.0 != generation {
+        cache.1 = compile_replacements();
+        cache.0 = generation;
+    }
+    if cache.1.is_empty() {
         return text.to_string();
     }
-    let mut ordered = dict.replacements.clone();
-    ordered.sort_by_key(|r| std::cmp::Reverse(r.from.len()));
-
     let mut out = text.to_string();
-    for rep in ordered {
-        if rep.from.is_empty() || rep.from.eq_ignore_ascii_case(&rep.to) {
-            continue;
-        }
-        if is_ambiguous_common_word(&rep.from) && !rep.from.contains(' ') {
-            continue;
-        }
-        let pattern = format!(r"(?i)\b{}\b", regex::escape(&rep.from));
-        let Ok(re) = RegexBuilder::new(&pattern).build() else {
-            continue;
-        };
-        out = re.replace_all(&out, NoExpand(&rep.to)).into_owned();
+    for rep in &cache.1 {
+        out = rep.re.replace_all(&out, NoExpand(&rep.to)).into_owned();
     }
     out
 }
@@ -99,6 +134,8 @@ pub fn add_replacement(from: &str, to: &str) -> Result<()> {
     let mut dict = DICT.lock();
     dict.upsert_replacement(from.to_string(), to.to_string());
     dict.save()?;
+    drop(dict);
+    bump_dictionary_generation();
     Ok(())
 }
 
@@ -119,6 +156,8 @@ pub fn delete_replacement(from: &str) -> Result<bool> {
         return Ok(false);
     }
     dict.save()?;
+    drop(dict);
+    bump_dictionary_generation();
     Ok(true)
 }
 
