@@ -240,7 +240,9 @@ fn spawn_control_socket(app: AppHandle) {
             match command.trim() {
                 "toggle" => {
                     let app_for_toggle = app.clone();
-                    if let Err(e) = app.run_on_main_thread(move || pipeline::handle_press(app_for_toggle)) {
+                    if let Err(e) =
+                        app.run_on_main_thread(move || pipeline::handle_press(app_for_toggle))
+                    {
                         let _ = writeln!(stream, "ERR toggle: {e}");
                     } else {
                         let _ = writeln!(stream, "OK");
@@ -2146,4 +2148,3 @@ fn prepare_shutdown(app: &AppHandle) {
     // Brief pause so follow/partial threads observe the cancel flag before teardown.
     thread::sleep(Duration::from_millis(100));
 }
-
