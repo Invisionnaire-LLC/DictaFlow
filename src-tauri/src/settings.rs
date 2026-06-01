@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
@@ -150,15 +150,6 @@ impl Settings {
         read_settings_file(&path).unwrap_or_default()
     }
 
-    /// Persist settings under an exclusive lock (all writes must go through here).
-    pub fn save(&self) -> Result<()> {
-        let mut replacement = self.clone();
-        if cfg!(target_os = "macos") {
-            replacement.transcription_api_key = None;
-        }
-        Self::update(|saved| *saved = replacement)
-    }
-
     /// Reload settings under an exclusive lock, apply `patch`, then write atomically.
     pub fn update<F>(patch: F) -> Result<()>
     where
@@ -186,7 +177,7 @@ impl Settings {
             settings.transcription_api_key = None;
         }
         let json = serde_json::to_string_pretty(&settings)?;
-        write_atomic(&path, &json)?;
+        crate::fs_util::write_atomic(&path, &json)?;
         tracing::info!("settings updated at {}", path.display());
         Ok(())
     }
@@ -228,13 +219,6 @@ fn backup_corrupt_file(path: &Path, label: &str) {
     }
 }
 
-fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, contents).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))?;
-    Ok(())
-}
-
 fn settings_path() -> Option<PathBuf> {
     let dir = dirs::data_local_dir()?.join("DictaFlow");
     fs::create_dir_all(&dir).ok();
@@ -271,4 +255,70 @@ pub fn set_legacy_transcription_api_key(key: &str) -> Result<()> {
             Some(key.to_string())
         };
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn language_mode_parses_known_codes() {
+        assert_eq!(LanguageMode::parse("en"), LanguageMode::English);
+        assert_eq!(LanguageMode::parse("ENGLISH"), LanguageMode::English);
+        assert_eq!(LanguageMode::parse("es"), LanguageMode::Spanish);
+        assert_eq!(LanguageMode::parse("spanish"), LanguageMode::Spanish);
+        assert_eq!(
+            LanguageMode::parse("translate_en"),
+            LanguageMode::TranslateEnglish
+        );
+        assert_eq!(
+            LanguageMode::parse("translate"),
+            LanguageMode::TranslateEnglish
+        );
+        assert_eq!(LanguageMode::parse("auto"), LanguageMode::Auto);
+        assert_eq!(LanguageMode::parse("whatever"), LanguageMode::Auto);
+        assert_eq!(LanguageMode::parse(""), LanguageMode::Auto);
+    }
+
+    #[test]
+    fn language_mode_roundtrips_through_as_str() {
+        for mode in [
+            LanguageMode::Auto,
+            LanguageMode::English,
+            LanguageMode::Spanish,
+            LanguageMode::TranslateEnglish,
+        ] {
+            assert_eq!(LanguageMode::parse(mode.as_str()), mode);
+        }
+    }
+
+    #[test]
+    fn translate_english_has_no_source_language_but_sets_translate() {
+        let m = LanguageMode::TranslateEnglish;
+        assert_eq!(m.whisper_language(), None);
+        assert!(m.translate_to_english());
+    }
+
+    #[test]
+    fn forced_languages_map_to_codes_and_dont_translate() {
+        assert_eq!(LanguageMode::English.whisper_language(), Some("en"));
+        assert_eq!(LanguageMode::Spanish.whisper_language(), Some("es"));
+        assert!(!LanguageMode::English.translate_to_english());
+        assert!(!LanguageMode::Auto.translate_to_english());
+        assert_eq!(LanguageMode::Auto.whisper_language(), None);
+    }
+
+    #[test]
+    fn hotkey_display_joins_modifiers_and_code() {
+        let hk = Hotkey {
+            code: "Space".into(),
+            modifiers: vec!["Alt".into()],
+        };
+        assert_eq!(hk.display(), "Alt + Space");
+        let plain = Hotkey {
+            code: "F9".into(),
+            modifiers: vec![],
+        };
+        assert_eq!(plain.display(), "F9");
+    }
 }

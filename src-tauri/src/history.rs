@@ -137,7 +137,7 @@ where
     let (result, dirty) = f(&mut entries)?;
     if dirty {
         let json = serde_json::to_string_pretty(&entries)?;
-        write_atomic(&path, &json)?;
+        crate::fs_util::write_atomic(&path, &json)?;
     }
     Ok(result)
 }
@@ -151,13 +151,6 @@ fn read_history_file(path: &Path) -> Result<Vec<HistoryEntry>> {
         return Ok(Vec::new());
     }
     serde_json::from_str(&text).context("parse history")
-}
-
-fn write_atomic(path: &Path, contents: &str) -> Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, contents).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path).with_context(|| format!("rename to {}", path.display()))?;
-    Ok(())
 }
 
 fn remove_audio_file(path: Option<&str>) {
