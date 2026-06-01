@@ -172,9 +172,25 @@ impl Cleaner for LmStudioCleaner {
     }
 }
 
+/// Reject anything that isn't an `http(s)` URL before it's used as a request target.
+/// Guards against a crafted `settings.json` / future XSS pointing the cleanup POST
+/// (which carries the transcript) at an arbitrary or internal address.
+pub fn validate_base_url(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Ok(()); // empty → the default loopback URL is used
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(anyhow!("LM Studio URL must start with http:// or https://"))
+    }
+}
+
 fn normalize_base_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || validate_base_url(trimmed).is_err() {
         DEFAULT_BASE_URL.to_string()
     } else {
         trimmed.to_string()

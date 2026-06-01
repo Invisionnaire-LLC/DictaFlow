@@ -623,7 +623,9 @@ mod macos {
             {
                 return None;
             }
-            let count_number = core_foundation::number::CFNumber::wrap_under_get_rule(
+            // SAFETY: `count_ref` came from `AXUIElementCopyAttributeValue` (Create Rule);
+            // take ownership of the +1 reference so it is released exactly once on drop.
+            let count_number = core_foundation::number::CFNumber::wrap_under_create_rule(
                 count_ref as core_foundation::number::CFNumberRef,
             );
             let count = count_number.to_i64().unwrap_or(0);
@@ -671,7 +673,11 @@ mod macos {
     }
 
     unsafe fn cf_type_to_string(value: CFTypeRef) -> Option<String> {
-        let cf_string = CFString::wrap_under_get_rule(value as CFStringRef);
+        // SAFETY: `value` came from an `AXUIElementCopy*` call (Create Rule), so the
+        // caller owns a +1 reference. `wrap_under_create_rule` takes that ownership and
+        // releases on drop — balancing the retain count. (Using `get_rule` here would
+        // retain again and leak one reference per call.)
+        let cf_string = CFString::wrap_under_create_rule(value as CFStringRef);
         Some(cf_string.to_string())
     }
 }

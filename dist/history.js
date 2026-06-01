@@ -38,7 +38,7 @@
         <div class="entry" data-id="${escapeHtml(e.id)}">
           <div class="entry-head">
             <span class="entry-time">${escapeHtml(formatTime(e.created_at))}</span>
-            <span class="entry-dur">${e.duration_secs.toFixed(1)}s</span>
+            <span class="entry-dur">${Number(e.duration_secs ?? 0).toFixed(1)}s</span>
           </div>
           <textarea class="entry-edit" data-id="${escapeHtml(e.id)}">${escapeHtml(e.cleaned)}</textarea>
           ${e.raw !== e.cleaned ? `<div class="entry-raw">${escapeHtml(e.raw)}</div>` : ''}

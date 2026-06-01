@@ -485,23 +485,23 @@
         <h1>Settings</h1>
         <p>DictaFlow preferences</p>
       </div>
-      <button class="nav-btn" type="button" data-panel="shortcut" aria-current="page">
-        <span class="nav-icon">⌨</span> Shortcut
+      <button id="nav-shortcut" class="nav-btn" type="button" data-panel="shortcut" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">⌨</span> Shortcut
       </button>
-      <button class="nav-btn" type="button" data-panel="models">
-        <span class="nav-icon">✦</span> Models
+      <button id="nav-models" class="nav-btn" type="button" data-panel="models">
+        <span class="nav-icon" aria-hidden="true">✦</span> Models
       </button>
-      <button class="nav-btn" type="button" data-panel="appearance">
-        <span class="nav-icon">◫</span> Appearance
+      <button id="nav-appearance" class="nav-btn" type="button" data-panel="appearance">
+        <span class="nav-icon" aria-hidden="true">◫</span> Appearance
       </button>
-      <button class="nav-btn" type="button" data-panel="vocabulary">
-        <span class="nav-icon">Aa</span> Vocabulary
+      <button id="nav-vocabulary" class="nav-btn" type="button" data-panel="vocabulary">
+        <span class="nav-icon" aria-hidden="true">Aa</span> Vocabulary
       </button>
-      <button class="nav-btn" type="button" data-panel="startup">
-        <span class="nav-icon">⚙</span> Startup
+      <button id="nav-startup" class="nav-btn" type="button" data-panel="startup">
+        <span class="nav-icon" aria-hidden="true">⚙</span> Startup
       </button>
-      <button class="nav-btn" type="button" data-panel="permissions">
-        <span class="nav-icon">◉</span> Permissions
+      <button id="nav-permissions" class="nav-btn" type="button" data-panel="permissions">
+        <span class="nav-icon" aria-hidden="true">◉</span> Permissions
       </button>
     </aside>
 
@@ -534,9 +534,9 @@
         <div class="card">
           <div class="card-title">After dictation</div>
           <div class="toggle-row">
-            <input id="autoSubmit" type="checkbox" />
+            <input id="autoSubmit" type="checkbox" aria-labelledby="autoSubmitLabel" />
             <div class="toggle-copy">
-              <strong>Press Enter automatically after pasting (auto-send)</strong>
+              <strong id="autoSubmitLabel">Press Enter automatically after pasting (auto-send)</strong>
               <span>Useful in chat apps when you want to send immediately after dictating.</span>
             </div>
           </div>
@@ -629,10 +629,11 @@
             <label for="cleanupModel" id="cleanupModelLabel">Model name</label>
             <div class="combo-wrap">
               <div class="combo-row">
-                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b" />
-                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false">▾</button>
+                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b"
+                  role="combobox" aria-expanded="false" aria-controls="cleanupList" aria-autocomplete="list" />
+                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false" aria-controls="cleanupList">▾</button>
               </div>
-              <div id="cleanupList" class="combo-list" role="listbox"></div>
+              <div id="cleanupList" class="combo-list" role="listbox" aria-label="Available cleanup models"></div>
             </div>
           </div>
           <div class="btn-row">
@@ -664,17 +665,17 @@
           </div>
 
           <div class="toggle-row">
-            <input id="hudAlwaysOnTop" type="checkbox" />
+            <input id="hudAlwaysOnTop" type="checkbox" aria-labelledby="hudAlwaysOnTopLabel" />
             <div class="toggle-copy">
-              <strong>Keep HUD above other windows</strong>
+              <strong id="hudAlwaysOnTopLabel">Keep HUD above other windows</strong>
               <span>When off, the pill only floats up while you dictate.</span>
             </div>
           </div>
 
           <div class="toggle-row">
-            <input id="liveTranscript" type="checkbox" />
+            <input id="liveTranscript" type="checkbox" aria-labelledby="liveTranscriptLabel" />
             <div class="toggle-copy">
-              <strong>Show live transcript while recording</strong>
+              <strong id="liveTranscriptLabel">Show live transcript while recording</strong>
               <span>Preview words in the HUD before you release the hotkey.</span>
             </div>
           </div>
@@ -749,9 +750,9 @@
         <div class="card">
           <div class="card-title">Startup</div>
           <div id="launchAtLoginRow" class="toggle-row">
-            <input id="launchAtLogin" type="checkbox" />
+            <input id="launchAtLogin" type="checkbox" aria-labelledby="launchAtLoginLabel" />
             <div class="toggle-copy">
-              <strong>Open DictaFlow at login</strong>
+              <strong id="launchAtLoginLabel">Open DictaFlow at login</strong>
               <span>Keep the menu bar agent ready without launching the app manually.</span>
             </div>
           </div>
