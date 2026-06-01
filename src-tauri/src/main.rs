@@ -6,6 +6,7 @@ mod audio;
 mod cleanup;
 mod cloud_asr;
 mod dictionary;
+mod fs_util;
 mod history;
 mod hud_cursor;
 mod login_item;
@@ -57,6 +58,8 @@ const PARTIAL_NEW_AUDIO_SECS: f32 = 0.12;
 const PARTIAL_PREVIEW_CHARS: usize = 96;
 /// Releases shorter than this are treated as tap-to-toggle (e.g. mouse button → Cmd+/).
 const HOTKEY_HOLD_RELEASE_MS: u64 = 250;
+/// Max time to wait on the LLM cleanup pass before falling back to rules-only output.
+const CLEANUP_TIMEOUT_MS: u64 = 800;
 
 struct HudPlacedMark {
     x: i32,
@@ -376,7 +379,7 @@ fn main() {
                 .unwrap_or_else(|| cleanup::lmstudio::DEFAULT_BASE_URL.to_string());
             let cleaner_box = cleanup::make_cleaner(
                 &cleanup_backend,
-                Duration::from_millis(800),
+                Duration::from_millis(CLEANUP_TIMEOUT_MS),
                 &ollama_model,
                 &lmstudio_model,
                 &lmstudio_base_url,
@@ -1710,6 +1713,7 @@ fn set_cleanup_backend(
         .filter(|u| !u.is_empty())
         .or_else(|| saved_now.lmstudio_base_url.clone())
         .unwrap_or_else(|| cleanup::lmstudio::DEFAULT_BASE_URL.to_string());
+    cleanup::lmstudio::validate_base_url(&lmstudio_base_url).map_err(|e| e.to_string())?;
     let ollama_model = saved_now
         .ollama_model
         .clone()
@@ -1718,7 +1722,7 @@ fn set_cleanup_backend(
 
     let cleaner_box = cleanup::make_cleaner(
         &normalized,
-        Duration::from_millis(800),
+        Duration::from_millis(CLEANUP_TIMEOUT_MS),
         &ollama_model,
         &lmstudio_model,
         &lmstudio_base_url,
@@ -1766,8 +1770,25 @@ struct TranscriptionConfig {
     model: String,
     /// The model that would actually be sent (resolved against provider default).
     resolved_model: String,
-    /// API key is returned so the local settings page can show/edit it.
-    api_key: String,
+    /// Whether a cloud API key is stored. The raw key is NEVER sent to the webview.
+    has_key: bool,
+    /// Masked hint for display only (e.g. `gsk_…Ez77`), empty when no key is stored.
+    api_key_hint: String,
+}
+
+/// Mask an API key for display: first 4 + ellipsis + last 4. Never reveals the middle.
+fn mask_api_key(key: &str) -> String {
+    let key = key.trim();
+    if key.is_empty() {
+        return String::new();
+    }
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() <= 8 {
+        return "••••".to_string();
+    }
+    let head: String = chars[..4].iter().collect();
+    let tail: String = chars[chars.len() - 4..].iter().collect();
+    format!("{head}…{tail}")
 }
 
 #[tauri::command]
@@ -1778,7 +1799,8 @@ fn get_transcription_config(app: AppHandle) -> TranscriptionConfig {
             backend: cloud.backend().as_str().to_string(),
             model: cloud.model_override().to_string(),
             resolved_model: cloud.resolved_model(),
-            api_key: cloud.api_key().to_string(),
+            has_key: !cloud.api_key().is_empty(),
+            api_key_hint: mask_api_key(cloud.api_key()),
         };
     }
     let saved = settings::Settings::load();
@@ -1793,7 +1815,8 @@ fn get_transcription_config(app: AppHandle) -> TranscriptionConfig {
         backend: backend.as_str().to_string(),
         model: transcriber.model_override().to_string(),
         resolved_model: transcriber.resolved_model(),
-        api_key: transcriber.api_key().to_string(),
+        has_key: !transcriber.api_key().is_empty(),
+        api_key_hint: mask_api_key(transcriber.api_key()),
     }
 }
 
@@ -1805,10 +1828,17 @@ fn set_transcription_config(
     model: String,
 ) -> Result<String, String> {
     let parsed = cloud_asr::Backend::parse(&backend);
-    let key = api_key.trim().to_string();
+    // A blank key field means "keep the stored key" — never wipes an existing key.
+    let provided_key = api_key.trim().to_string();
     let model = model.trim().to_string();
 
-    if parsed.is_cloud() && key.is_empty() {
+    let effective_key = if provided_key.is_empty() {
+        secrets::get_transcription_api_key()
+    } else {
+        provided_key.clone()
+    };
+
+    if parsed.is_cloud() && effective_key.is_empty() {
         return Err(format!(
             "Enter an API key to use the {} backend.",
             parsed.as_str()
@@ -1821,25 +1851,33 @@ fn set_transcription_config(
 
     let was_cloud = ctx.cloud.read().is_cloud();
 
-    let transcriber = cloud_asr::CloudTranscriber::new(parsed, key.clone(), model.clone());
+    let transcriber =
+        cloud_asr::CloudTranscriber::new(parsed, effective_key.clone(), model.clone());
     let resolved = transcriber.resolved_model();
     *ctx.cloud.write() = transcriber;
 
-    let mut saved = settings::Settings::load();
-    saved.transcription_backend = Some(parsed.as_str().to_string());
-    saved.transcription_model = if model.is_empty() { None } else { Some(model) };
+    // Only touch stored storage when the user actually typed a new key.
+    if !provided_key.is_empty() {
+        if let Err(e) = secrets::set_transcription_api_key(&provided_key) {
+            tracing::warn!("could not store transcription API key: {:?}", e);
+        }
+    }
+    let backend_str = parsed.as_str().to_string();
+    let model_opt = if model.is_empty() { None } else { Some(model) };
     #[cfg(not(target_os = "macos"))]
-    {
-        saved.transcription_api_key = if key.is_empty() {
-            None
-        } else {
-            Some(key.clone())
-        };
-    }
-    if let Err(e) = secrets::set_transcription_api_key(&key) {
-        tracing::warn!("could not store transcription API key: {:?}", e);
-    }
-    if let Err(e) = saved.save() {
+    let key_opt = if effective_key.is_empty() {
+        None
+    } else {
+        Some(effective_key.clone())
+    };
+    if let Err(e) = settings::Settings::update(|s| {
+        s.transcription_backend = Some(backend_str.clone());
+        s.transcription_model = model_opt.clone();
+        #[cfg(not(target_os = "macos"))]
+        {
+            s.transcription_api_key = key_opt.clone();
+        }
+    }) {
         tracing::warn!("could not persist transcription config: {:?}", e);
     }
 
@@ -1870,10 +1908,7 @@ fn get_transcription_language() -> String {
 #[tauri::command]
 fn set_transcription_language(language: String) -> Result<String, String> {
     let mode = settings::LanguageMode::parse(&language);
-    let mut saved = settings::Settings::load();
-    saved.transcription_language = Some(mode.as_str().to_string());
-    saved
-        .save()
+    settings::Settings::update(|s| s.transcription_language = Some(mode.as_str().to_string()))
         .map_err(|e| format!("could not save language: {}", e))?;
     tracing::info!("transcription language set to '{}'", mode.as_str());
     Ok(mode.as_str().to_string())
