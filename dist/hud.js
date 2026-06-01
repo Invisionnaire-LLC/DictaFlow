@@ -39,6 +39,7 @@
       }
     }
 
+    let barsRaf = null;
     function animateBars() {
       smoothed += (currentRms - smoothed) * 0.35;
       const base = 6;
@@ -52,9 +53,24 @@
         const h = base + boost * maxGrowth * (0.4 + wiggle * 0.6);
         bar.style.height = h.toFixed(1) + 'px';
       });
-      requestAnimationFrame(animateBars);
+      barsRaf = requestAnimationFrame(animateBars);
     }
-    animateBars();
+    // Pause the waveform loop while the HUD window is hidden to avoid burning the
+    // compositor when nothing is visible.
+    function startBars() {
+      if (barsRaf === null) animateBars();
+    }
+    function stopBars() {
+      if (barsRaf !== null) {
+        cancelAnimationFrame(barsRaf);
+        barsRaf = null;
+      }
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopBars();
+      else startBars();
+    });
+    if (!document.hidden) startBars();
 
     function setLiveTranscript(enabled) {
       body.dataset.liveTranscript = enabled ? 'on' : 'off';

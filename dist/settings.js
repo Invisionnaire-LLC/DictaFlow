@@ -136,11 +136,13 @@
       renderComboList();
       cleanupListEl.classList.add("open");
       cleanupToggleEl.setAttribute("aria-expanded", "true");
+      cleanupModelEl.setAttribute("aria-expanded", "true");
     }
 
     function closeComboList() {
       cleanupListEl.classList.remove("open");
       cleanupToggleEl.setAttribute("aria-expanded", "false");
+      cleanupModelEl.setAttribute("aria-expanded", "false");
     }
 
     // Set the hint via safe DOM nodes (no innerHTML).
@@ -618,18 +620,26 @@
     refreshModelDownloadStatus();
 
     if (window.__TAURI__?.event?.listen) {
-      window.__TAURI__.event.listen("model_download_start", () => {
+      // Track unlisten handles so re-opening Settings doesn't stack duplicate listeners.
+      const unlistens = [];
+      const track = (p) => p.then((un) => unlistens.push(un)).catch(() => {});
+      track(window.__TAURI__.event.listen("model_download_start", () => {
         setModelDownloadUi(true, 0, "Starting download…");
-      });
-      window.__TAURI__.event.listen("model_download_progress", (e) => {
+      }));
+      track(window.__TAURI__.event.listen("model_download_progress", (e) => {
         const pct = Number(e.payload) || 0;
         setModelDownloadUi(true, pct, `Downloading speech model… ${pct}%`);
-      });
-      window.__TAURI__.event.listen("model_download_complete", () => {
+      }));
+      track(window.__TAURI__.event.listen("model_download_complete", () => {
         setModelDownloadUi(false);
-      });
-      window.__TAURI__.event.listen("model_download_failed", (e) => {
+      }));
+      track(window.__TAURI__.event.listen("model_download_failed", (e) => {
         setModelDownloadUi(true, 0, `Download failed: ${e.payload || "unknown error"}`);
+      }));
+      window.addEventListener("beforeunload", () => {
+        for (const un of unlistens) {
+          try { un(); } catch (_) {}
+        }
       });
     }
 
@@ -729,7 +739,7 @@
     const asrSaveBtn = document.getElementById("asrSave");
     const autoSubmitEl = document.getElementById("autoSubmit");
 
-    let asrCurrent = { backend: "local", model: "", api_key: "" };
+    let asrCurrent = { backend: "local", model: "", hasKey: false };
 
     const ASR_HINTS = {
       groq: "Get a key at console.groq.com. Default model: whisper-large-v3.",
@@ -763,15 +773,17 @@
 
     function asrDirty() {
       const model = asrIsCloud() ? asrModelEl.value : "";
+      const typedNewKey = asrApiKeyEl.value.trim() !== "";
       return (
         asrBackendEl.value !== asrCurrent.backend ||
         model !== (asrCurrent.model || "") ||
-        asrApiKeyEl.value.trim() !== (asrCurrent.api_key || "")
+        typedNewKey
       );
     }
 
     function updateAsrSaveState() {
-      const needsKey = asrIsCloud() && !asrApiKeyEl.value.trim();
+      // A stored key counts — blank field then means "keep existing".
+      const needsKey = asrIsCloud() && !asrCurrent.hasKey && !asrApiKeyEl.value.trim();
       asrSaveBtn.disabled = needsKey || !asrDirty();
     }
 
@@ -791,11 +803,15 @@
         const provider = cfg.backend === "local" ? "groq" : cfg.backend;
         populateAsrModels(provider, cfg.model || cfg.resolved_model);
         asrBackendEl.value = cfg.backend;
-        asrApiKeyEl.value = cfg.api_key || "";
+        // The raw key never leaves the backend — show only a masked hint as placeholder.
+        asrApiKeyEl.value = "";
+        asrApiKeyEl.placeholder = cfg.has_key
+          ? `${cfg.api_key_hint} · saved (leave blank to keep)`
+          : "Paste your API key";
         asrCurrent = {
           backend: cfg.backend,
           model: cfg.backend === "local" ? "" : asrModelEl.value,
-          api_key: cfg.api_key || "",
+          hasKey: !!cfg.has_key,
         };
         refreshAsrFields();
       } catch (err) {
@@ -811,21 +827,21 @@
     asrSaveBtn.addEventListener("click", async () => {
       asrSaveBtn.disabled = true;
       setAsrMessage("Saving…");
-      const model = asrIsCloud() ? asrModelEl.value : "";
       try {
         const backend = await invoke("set_transcription_config", {
           backend: asrBackendEl.value,
           apiKey: asrApiKeyEl.value.trim(),
-          model,
+          model: asrIsCloud() ? asrModelEl.value : "",
         });
-        asrCurrent = { backend, model, api_key: asrApiKeyEl.value.trim() };
         setAsrMessage(
           backend === "local"
             ? "Using local Whisper (offline)."
             : `Using ${backend} API. Audio will be sent to the cloud on each dictation.`,
           "ok"
         );
-        updateAsrSaveState();
+        // Reload from the backend so state reflects what was actually stored
+        // (confirmed model, key field cleared, has_key refreshed).
+        await loadAsrConfig();
       } catch (err) {
         setAsrMessage(String(err), "err");
         updateAsrSaveState();
