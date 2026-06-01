@@ -4,6 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Result};
 use fs2::FileExt;
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_OLLAMA_MODEL: &str = "gemma3:1b";
@@ -142,15 +144,27 @@ pub struct Settings {
     pub launch_at_login: bool,
 }
 
+/// In-memory source of truth for settings reads. The app is single-instance (see the
+/// single-instance lock in main), and every write goes through `Settings::update`, so the
+/// cache stays coherent with disk while avoiding a JSON file read on every hot-path access
+/// (language mode, live-transcript, auto-submit are read per dictation).
+static CACHE: Lazy<RwLock<Settings>> = Lazy::new(|| RwLock::new(load_from_disk()));
+
+fn load_from_disk() -> Settings {
+    match settings_path() {
+        Some(path) => read_settings_file(&path).unwrap_or_default(),
+        None => Settings::default(),
+    }
+}
+
 impl Settings {
+    /// Cheap clone of the cached settings (no disk read).
     pub fn load() -> Self {
-        let Some(path) = settings_path() else {
-            return Self::default();
-        };
-        read_settings_file(&path).unwrap_or_default()
+        CACHE.read().clone()
     }
 
-    /// Reload settings under an exclusive lock, apply `patch`, then write atomically.
+    /// Reload settings under an exclusive lock, apply `patch`, write atomically, and refresh
+    /// the in-memory cache.
     pub fn update<F>(patch: F) -> Result<()>
     where
         F: FnOnce(&mut Self),
@@ -178,6 +192,7 @@ impl Settings {
         }
         let json = serde_json::to_string_pretty(&settings)?;
         crate::fs_util::write_atomic(&path, &json)?;
+        *CACHE.write() = settings;
         tracing::info!("settings updated at {}", path.display());
         Ok(())
     }
