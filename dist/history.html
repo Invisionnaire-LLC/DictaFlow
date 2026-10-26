@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DictaFlow History</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #1e1e22;
+      color: #e8e8ec;
+    }
+    .wrap { padding: 22px 26px 26px; height: calc(100% - 48px); display: flex; flex-direction: column; }
+    h1 { margin: 0 0 4px 0; font-size: 17px; font-weight: 600; }
+    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 14px; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+    .toolbar input {
+      flex: 1;
+      padding: 9px 12px;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 13px;
+    }
+    button {
+      padding: 7px 13px;
+      background: #3a3a42;
+      border: 1px solid #4a4a52;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #45454f; }
+    button.danger { background: #5a2a2a; border-color: #7a3a3a; }
+    button.danger:hover { background: #6a3333; }
+    .meta { color: #9a9aa0; font-size: 11px; margin-bottom: 10px; }
+    .list {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid #3a3a42;
+      border-radius: 8px;
+      background: #17171b;
+    }
+    .entry {
+      padding: 12px 14px;
+      border-bottom: 1px solid #2a2a31;
+    }
+    .entry:last-child { border-bottom: none; }
+    .entry-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .entry-time { color: #9a9aa0; font-size: 11px; }
+    .entry-dur { color: #7a7a80; font-size: 11px; margin-left: auto; }
+    .entry-edit {
+      width: 100%;
+      min-height: 72px;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      background: #2a2a31;
+      border: 1px solid #3a3a42;
+      border-radius: 6px;
+      color: #e8e8ec;
+      font-size: 14px;
+      line-height: 1.45;
+      resize: vertical;
+      margin-bottom: 8px;
+      font-family: inherit;
+    }
+    .entry-raw {
+      font-size: 12px;
+      color: #9a9aa0;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 8px;
+    }
+    .entry-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .empty {
+      padding: 28px 16px;
+      text-align: center;
+      color: #9a9aa0;
+      font-size: 13px;
+    }
+    .msg { margin-top: 8px; font-size: 12px; color: #9a9aa0; min-height: 16px; }
+    .msg.ok { color: #81c784; }
+    .msg.err { color: #ef9a9a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>History</h1>
+    <div class="sub">Search past dictations. Edit cleaned text to teach DictaFlow new words.</div>
+
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search history…" autocomplete="off" />
+      <button id="refresh">Refresh</button>
+      <button id="clear" class="danger">Clear all</button>
+    </div>
+    <div id="count" class="meta">Loading…</div>
+    <div id="list" class="list"></div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="history.js"></script>
+</body>
+</html>

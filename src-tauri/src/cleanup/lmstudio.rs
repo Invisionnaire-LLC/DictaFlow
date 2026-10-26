@@ -1,0 +1,223 @@
+//! LM Studio cleanup backend. Same role as Ollama (a local LLM that polishes
+//! text), but speaks LM Studio's OpenAI-compatible wire protocol:
+//!
+//! - generate:    POST {base_url}/chat/completions  (choices[0].message.content)
+//! - list models: GET  {base_url}/models            (data[].id)
+//!
+//! Default base URL is http://localhost:1234/v1 (port is configurable).
+
+use std::time::Duration;
+
+use anyhow::{anyhow, Result};
+use parking_lot::RwLock;
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
+
+use super::prompt::{build_prompt, num_predict_cap};
+use super::{finish_output, get_json, http_client, post_json, sorted_models, Cleaner, ModelInfo};
+
+pub const DEFAULT_BASE_URL: &str = "http://localhost:1234/v1";
+
+#[derive(Serialize)]
+struct ChatRequest<'a> {
+    model: &'a str,
+    messages: Vec<ChatMessage<'a>>,
+    temperature: f32,
+    max_tokens: i32,
+    stream: bool,
+}
+
+#[derive(Serialize)]
+struct ChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatResponseMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: String,
+}
+
+fn to_models(resp: ModelsResponse) -> Vec<ModelInfo> {
+    // LM Studio's `/v1/models` reports no size.
+    sorted_models(resp.data.into_iter().map(|m| ModelInfo {
+        name: m.id,
+        size: 0,
+    }))
+}
+
+/// Holds the LM Studio base URL and the selected model (empty = first available),
+/// both behind `RwLock` for runtime updates — mirroring `OllamaCleaner`.
+pub struct LmStudioCleaner {
+    client: Client,
+    base_url: RwLock<String>,
+    model: RwLock<String>,
+}
+
+impl LmStudioCleaner {
+    pub fn new(timeout: Duration, base_url: String, model: String) -> Self {
+        LmStudioCleaner {
+            client: http_client(timeout),
+            base_url: RwLock::new(normalize_base_url(&base_url)),
+            model: RwLock::new(model.trim().to_string()),
+        }
+    }
+
+    pub fn base_url(&self) -> String {
+        self.base_url.read().clone()
+    }
+
+    /// The selected model, or the first listed model when none is configured.
+    fn resolve_model(&self) -> Result<String> {
+        let model = self.model();
+        if !model.is_empty() {
+            return Ok(model);
+        }
+        let first = self
+            .list_models()?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("LM Studio has no models loaded"))?;
+        Ok(first.name)
+    }
+}
+
+impl Cleaner for LmStudioCleaner {
+    fn request(&self, raw: &str, timeout: Option<Duration>) -> Result<String> {
+        let model = self.resolve_model()?;
+        let prompt = build_prompt(raw);
+        let body = ChatRequest {
+            model: &model,
+            messages: vec![ChatMessage {
+                role: "user",
+                content: &prompt,
+            }],
+            temperature: 0.0,
+            max_tokens: num_predict_cap(raw),
+            stream: false,
+        };
+        let url = format!("{}/chat/completions", self.base_url());
+        let decoded: ChatResponse = post_json(&self.client, &url, &body, timeout, "lmstudio")?;
+        let content = decoded
+            .choices
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("lmstudio empty choices"))?
+            .message
+            .content;
+        finish_output("lmstudio", &content)
+    }
+
+    fn model(&self) -> String {
+        self.model.read().clone()
+    }
+
+    fn set_model(&self, model: String) {
+        *self.model.write() = model.trim().to_string();
+    }
+
+    fn list_models(&self) -> Result<Vec<ModelInfo>> {
+        let url = format!("{}/models", self.base_url());
+        let resp: ModelsResponse = get_json(&self.client, &url, "lmstudio models")?;
+        Ok(to_models(resp))
+    }
+}
+
+/// Reject anything that isn't an `http(s)` URL before it's used as a request target.
+/// Guards against a crafted `settings.json` / future XSS pointing the cleanup POST
+/// (which carries the transcript) at an arbitrary or internal address.
+pub fn validate_base_url(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Ok(()); // empty → the default loopback URL is used
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Ok(())
+    } else {
+        Err(anyhow!("LM Studio URL must start with http:// or https://"))
+    }
+}
+
+fn normalize_base_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    if trimmed.is_empty() || validate_base_url(trimmed).is_err() {
+        DEFAULT_BASE_URL.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_body_shape() {
+        let prompt = build_prompt("hi");
+        let body = ChatRequest {
+            model: "qwen2.5-7b",
+            messages: vec![ChatMessage {
+                role: "user",
+                content: &prompt,
+            }],
+            temperature: 0.0,
+            max_tokens: num_predict_cap("hi"),
+            stream: false,
+        };
+        let v = serde_json::to_value(&body).unwrap();
+        assert_eq!(v["model"], "qwen2.5-7b");
+        assert_eq!(v["messages"][0]["role"], "user");
+        assert_eq!(v["messages"][0]["content"], prompt);
+        assert_eq!(v["temperature"], 0.0);
+        assert_eq!(v["stream"], false);
+        assert_eq!(v["max_tokens"], 60);
+    }
+
+    #[test]
+    fn parses_chat_response_and_strips_preamble() {
+        let json =
+            r#"{"choices":[{"message":{"role":"assistant","content":"Output: Hello world."}}]}"#;
+        let decoded: ChatResponse = serde_json::from_str(json).unwrap();
+        let content = decoded.choices.into_iter().next().unwrap().message.content;
+        assert_eq!(finish_output("lmstudio", &content).unwrap(), "Hello world.");
+    }
+
+    #[test]
+    fn parses_models_response() {
+        let json = r#"{"data":[{"id":"qwen2.5-7b"},{"id":"llama-3.2-3b"}]}"#;
+        let models = to_models(serde_json::from_str(json).unwrap());
+        assert_eq!(models[0].name, "llama-3.2-3b");
+        assert_eq!(models[1].name, "qwen2.5-7b");
+        assert_eq!(models[0].size, 0);
+    }
+
+    #[test]
+    fn normalizes_base_url() {
+        assert_eq!(
+            normalize_base_url("http://localhost:1234/v1/"),
+            "http://localhost:1234/v1"
+        );
+        assert_eq!(normalize_base_url("  "), DEFAULT_BASE_URL);
+    }
+}

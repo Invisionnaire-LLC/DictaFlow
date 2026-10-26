@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>About DictaFlow</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #1e1e22;
+      color: #e8e8ec;
+    }
+    .wrap {
+      padding: 28px 32px;
+      max-width: 360px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .brand img {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+    }
+    h1 { margin: 0 0 4px 0; font-size: 22px; font-weight: 600; }
+    .sub { color: #9a9aa0; font-size: 12px; margin-bottom: 20px; }
+    dl { display: grid; grid-template-columns: 140px 1fr; gap: 8px 12px; font-size: 13px; }
+    dt { color: #9a9aa0; }
+    dd { margin: 0; color: #e8e8ec; }
+    a { color: #64b5f6; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .footer {
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 1px solid #2e2e35;
+      font-size: 11px;
+      color: #7a7a80;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <img src="invisionnaire.png" alt="Invisionnaire" />
+      <h1>DictaFlow</h1>
+    </div>
+    <div class="sub"><span id="versionLine">1.0.0</span> · DictaFlow by Invisionnaire LLC</div>
+    <dl>
+      <dt>Build</dt><dd id="buildHash">…</dd>
+      <dt>Transcription</dt><dd>whisper-rs · large-v3-turbo</dd>
+      <dt>Cleanup</dt><dd>Rules + Ollama · <span id="ollamaModel">gemma3:1b</span></dd>
+      <dt>Hotkey</dt><dd id="hotkeyLine">Option + Space</dd>
+      <dt>Paste</dt><dd>Clipboard + Cmd+V</dd>
+      <dt>Platform</dt><dd>macOS</dd>
+    </dl>
+    <div class="footer">
+      Local-first. Transcription and cleanup run on your Mac unless you enable a cloud backend.
+      <a href="https://github.com/Invisionnaire-LLC/DictaFlow/blob/main/docs/PRIVACY-POLICY.md">Privacy</a>
+      · <a href="https://github.com/Invisionnaire-LLC/DictaFlow">Source (GPLv3)</a>
+    </div>
+  </div>
+  <script src="common.js"></script>
+  <script src="about.js"></script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+name: Build Windows (CUDA)
+
+# Manual trigger — produces a Windows .msi / .exe for testing.
+# The runner has no GPU, but compiling whisper-rs with CUDA only needs the
+# CUDA Toolkit (nvcc + cuBLAS), not a GPU. The resulting build REQUIRES an
+# NVIDIA GPU + CUDA runtime to RUN.
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: blacksmith-4vcpu-windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.19
+        id: cuda-toolkit
+        with:
+          cuda: '12.5.1'
+          method: 'network'
+          # whisper.cpp CUDA backend needs nvcc + cudart + cuBLAS.
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+
+      - name: Show CUDA version
+        run: nvcc --version
+
+      # CMake's "Visual Studio 17 2022" generator compiles the CUDA backend via
+      # MSBuild, which needs CUDA's BuildCustomizations (CUDA *.props/*.targets)
+      # inside the VS install. GitHub's image has them; Blacksmith's doesn't, so
+      # copy them from the CUDA toolkit into VS. Fixes "No CUDA toolset found".
+      - name: Wire CUDA into Visual Studio (MSBuild integration)
+        shell: pwsh
+        run: |
+          $cuda = $env:CUDA_PATH
+          if (-not $cuda) { $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.5" }
+          $src = Join-Path $cuda "extras\visual_studio_integration\MSBuildExtensions"
+          if (-not (Test-Path $src)) { throw "CUDA VS integration not found at $src" }
+          # -products * so this also finds VS Build Tools (Blacksmith's image),
+          # not just full VS editions.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "No Visual Studio install found via vswhere" }
+          $dst = Join-Path $vsPath "MSBuild\Microsoft\VC\v170\BuildCustomizations"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          Write-Host "Copying CUDA MSBuild integration`n  from: $src`n  to:   $dst"
+          Copy-Item "$src\*" -Destination $dst -Recurse -Force
+          Get-ChildItem $dst | Select-Object -ExpandProperty Name
+
+      # whisper-rs-sys runs bindgen, which needs libclang.dll (part of LLVM).
+      # GitHub's windows-latest ships LLVM; Blacksmith's image does not, so
+      # install it explicitly and point bindgen at it via LIBCLANG_PATH.
+      - name: Install LLVM (libclang for bindgen)
+        run: |
+          choco install llvm --no-progress -y
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
+      - name: Build app (release)
+        working-directory: src-tauri
+        run: cargo tauri build
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: DictaFlow-Windows
+          if-no-files-found: error
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe

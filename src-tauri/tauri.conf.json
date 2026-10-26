@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "DictaFlow",
+  "version": "1.0.0",
+  "identifier": "com.invisionnaire.dictaflow",
+  "build": {
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "macOSPrivateApi": true,
+    "security": {
+      "csp": "default-src 'self' tauri: asset: https://asset.localhost ipc: http://ipc.localhost; script-src 'self' tauri: asset: https://asset.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data: blob:; connect-src 'self' tauri: ipc: http://ipc.localhost https://asset.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "copyright": "Copyright (c) 2026 Invisionnaire",
+    "shortDescription": "Local-first dictation tool",
+    "longDescription": "Hold a hotkey, speak, release. DictaFlow transcribes locally with Whisper and cleans up with Ollama.",
+    "macOS": {
+      "signingIdentity": null,
+      "entitlements": "./Entitlements.plist",
+      "hardenedRuntime": true
+    }
+  }
+}

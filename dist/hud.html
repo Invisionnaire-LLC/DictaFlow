@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DictaFlow HUD</title>
+  <style>
+    :root {
+      --bg: rgba(18, 18, 22, 0.88);
+      --fg-idle: rgba(180, 180, 188, 0.9);
+      --fg-recording: #2196F3;
+      --fg-processing: #FFB74D;
+      --fg-error: #E57373;
+      --ease: cubic-bezier(0.4, 0, 0.2, 1);
+      --pill-compact-w: 64px;
+      --pill-expanded-w: 200px;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: transparent;
+      color: white;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      overflow: hidden;
+      user-select: none;
+      pointer-events: none;
+    }
+    .shell {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .pill {
+      position: absolute;
+      top: 0;
+      right: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      width: var(--pill-compact-w);
+      height: 100%;
+      background: var(--bg);
+      border-radius: 16px;
+      padding: 0 5px;
+      box-sizing: border-box;
+      pointer-events: auto;
+      -webkit-app-region: drag;
+      app-region: drag;
+      cursor: grab;
+      transition: width 0.24s var(--ease);
+    }
+    body[data-layout="compact"] .pill {
+      width: var(--pill-compact-w);
+      padding: 0 5px;
+      gap: 0;
+    }
+    body[data-layout="expanded"] .pill {
+      justify-content: flex-start;
+      width: var(--pill-expanded-w);
+      padding: 0 5px 0 8px;
+      gap: 6px;
+    }
+    body[data-state="idle"] .pill { opacity: 0.72; }
+    body[data-state="recording"] .pill { opacity: 1; }
+    body:active .pill { cursor: grabbing; }
+
+    /* Classic and cursor share the waveform pill; cursor just can't be dragged. */
+    body:is([data-style="classic"], [data-style="cursor"]) .pill {
+      position: static;
+      width: 100% !important;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 8px;
+    }
+    body[data-style="cursor"] .pill {
+      cursor: default;
+      -webkit-app-region: no-drag;
+      app-region: no-drag;
+    }
+
+    body[data-style="notch"] .pill {
+      background: #000;
+      border-radius: 0 0 0 14px;
+    }
+    body[data-style="notch"][data-state="idle"] .pill { opacity: 1; }
+
+    #mic {
+      flex: 0 0 20px;
+      order: 3;
+      width: 20px;
+      height: 20px;
+      color: var(--fg-idle);
+      transition: color 0.15s var(--ease);
+    }
+    body[data-state="recording"] #mic { color: var(--fg-recording); }
+    body[data-state="processing"] #mic { color: var(--fg-processing); }
+    body[data-state="error"] #mic { color: var(--fg-error); }
+
+    #preview {
+      flex: 1 1 auto;
+      order: 1;
+      min-width: 0;
+      font-size: 11px;
+      line-height: 1.15;
+      color: rgba(255, 255, 255, 0.92);
+      overflow: hidden;
+      white-space: nowrap;
+      text-align: left;
+      display: none;
+    }
+    #preview span { display: inline-block; }
+    body[data-layout="expanded"][data-live-transcript="on"] #preview { display: block; }
+
+    body[data-layout="expanded"][data-live-transcript="on"]:is([data-style="classic"], [data-style="cursor"]) #bars {
+      display: none;
+    }
+    body[data-layout="expanded"][data-live-transcript="on"]:is([data-style="classic"], [data-style="cursor"]) .pill {
+      justify-content: flex-start;
+      gap: 6px;
+    }
+    #preview.empty span {
+      color: rgba(255, 255, 255, 0.45);
+      font-style: italic;
+    }
+
+    #bars {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      height: 28px;
+      order: 2;
+    }
+    body:is([data-style="classic"], [data-style="cursor"]) #bars { display: flex; }
+    .bar {
+      width: 4px;
+      height: 6px;
+      border-radius: 2px;
+      background: var(--fg-idle);
+      transition: background 0.15s;
+    }
+    body[data-state="recording"] .bar { background: var(--fg-recording); }
+
+    #spinner {
+      display: none;
+      flex: 0 0 auto;
+      order: 2;
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 179, 77, 0.3);
+      border-top-color: var(--fg-processing);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    body[data-state="processing"] #spinner { display: block; }
+    body[data-state="processing"]:is([data-style="classic"], [data-style="cursor"]) #bars { display: none; }
+    body[data-style="notch"] #bars { display: none !important; }
+
+    #download-label {
+      display: none;
+      flex: 0 1 auto;
+      order: 1;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--fg-processing);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 96px;
+    }
+    body[data-downloading="on"] #download-label { display: block; }
+    body[data-downloading="on"] #bars { display: none !important; }
+    body[data-downloading="on"] #mic { opacity: 0.45; }
+    body[data-downloading="on"][data-layout="compact"] .pill {
+      width: var(--pill-expanded-w);
+      padding: 0 8px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body data-state="idle" data-layout="compact" data-style="notch" data-live-transcript="on">
+  <div class="shell">
+    <div class="pill">
+      <div id="download-label" aria-live="polite">DL 0%</div>
+      <div id="preview" class="empty"><span>Listening…</span></div>
+      <div id="bars">
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+        <div class="bar"></div>
+      </div>
+      <div id="spinner"></div>
+      <svg id="mic" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/>
+      </svg>
+    </div>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="hud.js"></script>
+</body>
+</html>

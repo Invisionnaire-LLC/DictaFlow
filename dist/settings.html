@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DictaFlow Settings</title>
+  <style>
+    :root {
+      --bg: #1a1a1e;
+      --sidebar: #141418;
+      --surface: #222228;
+      --surface-raised: #2a2a31;
+      --border: #34343c;
+      --border-soft: #2a2a31;
+      --text: #ececf0;
+      --muted: #9a9aa3;
+      --dim: #72727c;
+      --accent: #64b5f6;
+      --accent-strong: #1976d2;
+      --success: #81c784;
+      --error: #ef9a9a;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 148px minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) auto;
+      height: 100vh;
+    }
+
+    .sidebar {
+      grid-row: 1 / 3;
+      background: var(--sidebar);
+      border-right: 1px solid var(--border-soft);
+      padding: 18px 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .sidebar-head {
+      padding: 0 10px 14px;
+    }
+
+    .sidebar-head h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+
+    .sidebar-head p {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+
+    .nav-btn {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      text-align: left;
+      padding: 9px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 120ms ease, color 120ms ease;
+    }
+
+    .nav-btn:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+    }
+
+    .nav-btn[aria-current="page"] {
+      background: rgba(100, 181, 246, 0.12);
+      color: var(--accent);
+    }
+
+    .nav-icon {
+      width: 16px;
+      text-align: center;
+      opacity: 0.85;
+      flex-shrink: 0;
+    }
+
+    .main {
+      min-width: 0;
+      overflow-y: auto;
+      padding: 22px 22px 12px;
+    }
+
+    textarea.control {
+      box-sizing: border-box;
+      width: 100%;
+      resize: vertical;
+      min-height: 70px;
+      font-family: ui-monospace, Menlo, monospace;
+      line-height: 1.4;
+    }
+
+    .panel {
+      display: none;
+      animation: fadeIn 160ms ease;
+    }
+
+    .panel.active { display: block; }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .panel.active { animation: none; }
+      .nav-btn { transition: none; }
+    }
+
+    .panel-head {
+      margin-bottom: 16px;
+    }
+
+    .panel-head h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .panel-head p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      max-width: 42ch;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius);
+      padding: 14px 14px 12px;
+      margin-bottom: 12px;
+    }
+
+    .card:last-child { margin-bottom: 0; }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin: 0 0 12px;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field:last-child { margin-bottom: 0; }
+
+    .field-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .field label,
+    .field .field-label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .control,
+    select.control {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      color: var(--text);
+      min-height: 40px;
+    }
+
+    select.control {
+      appearance: none;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% - 2px), calc(100% - 12px) calc(50% - 2px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+    }
+
+    .control.recording {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(100, 181, 246, 0.25);
+      background: #1a2430;
+    }
+
+    .control[tabindex="0"] { cursor: text; outline: none; }
+
+    .control[tabindex="0"]:focus-visible {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(100, 181, 246, 0.22);
+    }
+
+    .combo-wrap {
+      position: relative;
+    }
+
+    .combo-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .combo-row .control { flex: 1; min-width: 0; }
+
+    .combo-toggle {
+      flex: 0 0 40px;
+      width: 40px;
+      padding: 0;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .combo-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 20;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      max-height: 220px;
+      overflow-y: auto;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+      display: none;
+    }
+
+    .combo-list.open { display: block; }
+
+    .combo-item {
+      padding: 9px 12px;
+      cursor: pointer;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .combo-item:hover,
+
+    .combo-item.selected { color: var(--accent); }
+
+    .combo-item .meta {
+      margin-left: auto;
+      color: var(--dim);
+      font-size: 11px;
+      font-family: inherit;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-top: 1px solid var(--border-soft);
+    }
+
+    .toggle-row:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+    }
+
+    .toggle-row input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      margin-top: 2px;
+      accent-color: var(--accent-strong);
+      flex-shrink: 0;
+    }
+
+    .toggle-copy {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .toggle-copy strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 2px;
+    }
+
+    .toggle-copy span {
+      display: block;
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.4;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--surface-raised);
+    }
+
+    .badge.ok {
+      color: var(--success);
+      border-color: rgba(129, 199, 132, 0.35);
+      background: rgba(129, 199, 132, 0.08);
+    }
+
+    .badge.err {
+      color: var(--error);
+      border-color: rgba(239, 154, 154, 0.35);
+      background: rgba(239, 154, 154, 0.08);
+    }
+
+    .badge.pending { color: var(--muted); }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    button {
+      padding: 8px 12px;
+      background: var(--surface-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+
+    button:hover { background: #35353d; }
+
+    button.primary {
+      background: var(--accent-strong);
+      border-color: #1565c0;
+      color: #fff;
+    }
+
+    button.primary:hover { background: #1e88e5; }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: var(--dim);
+      line-height: 1.45;
+      margin-top: 10px;
+    }
+
+    .msg {
+      margin-top: 10px;
+      font-size: 11px;
+      min-height: 14px;
+    }
+
+    .msg.ok { color: var(--success); }
+    .msg.err { color: var(--error); }
+
+    .progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--border-soft);
+      overflow: hidden;
+      margin: 10px 0 6px;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #2196f3, #64b5f6);
+      transition: width 0.25s ease;
+    }
+    .download-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .dict-list {
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      background: #17171b;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+
+    .dict-empty {
+      padding: 22px 14px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .dict-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: 12px;
+    }
+
+    .dict-item:last-child { border-bottom: 0; }
+
+    .dict-pair {
+      flex: 1;
+      min-width: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .dict-pair .from { color: var(--muted); }
+    .dict-pair .arrow { color: var(--dim); margin: 0 4px; }
+    .dict-pair .to { color: var(--text); }
+
+    .dict-delete {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+
+    .footer {
+      grid-column: 2;
+      border-top: 1px solid var(--border-soft);
+      padding: 10px 22px 14px;
+      display: flex;
+      justify-content: flex-end;
+      background: var(--bg);
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Settings sections">
+      <div class="sidebar-head">
+        <h1>Settings</h1>
+        <p>DictaFlow preferences</p>
+      </div>
+      <button id="nav-shortcut" class="nav-btn" type="button" data-panel="shortcut" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">⌨</span> Shortcut
+      </button>
+      <button id="nav-models" class="nav-btn" type="button" data-panel="models">
+        <span class="nav-icon" aria-hidden="true">✦</span> Models
+      </button>
+      <button id="nav-appearance" class="nav-btn" type="button" data-panel="appearance">
+        <span class="nav-icon" aria-hidden="true">◫</span> Appearance
+      </button>
+      <button id="nav-vocabulary" class="nav-btn" type="button" data-panel="vocabulary">
+        <span class="nav-icon" aria-hidden="true">Aa</span> Vocabulary
+      </button>
+      <button id="nav-startup" class="nav-btn" type="button" data-panel="startup">
+        <span class="nav-icon" aria-hidden="true">⚙</span> Startup
+      </button>
+      <button id="nav-permissions" class="nav-btn" type="button" data-panel="permissions">
+        <span class="nav-icon" aria-hidden="true">◉</span> Permissions
+      </button>
+    </aside>
+
+    <main class="main">
+      <section id="panel-shortcut" class="panel active" aria-labelledby="nav-shortcut">
+        <header class="panel-head">
+          <h2>Shortcut</h2>
+          <p>Choose the global hotkey. Hold to talk, or tap twice to start and stop.</p>
+        </header>
+
+        <div class="card">
+          <div class="card-title">Hotkey</div>
+          <div class="field">
+            <span class="field-label">Current shortcut</span>
+            <div id="current" class="control">-</div>
+          </div>
+          <div class="field">
+            <span class="field-label">New shortcut</span>
+            <div id="capture" class="control" tabindex="0">Click here, then press keys…</div>
+          </div>
+          <div class="btn-row">
+            <button id="save" class="primary" disabled>Save hotkey</button>
+          </div>
+          <div id="hkMsg" class="msg"></div>
+          <p class="hint">
+            macOS does not expose the Fn key to global shortcuts. If your combo is rejected, try F13 or Ctrl + Space. Side mouse buttons work well with tap-to-toggle.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">After dictation</div>
+          <div class="toggle-row">
+            <input id="autoSubmit" type="checkbox" aria-labelledby="autoSubmitLabel" />
+            <div class="toggle-copy">
+              <strong id="autoSubmitLabel">Press Enter automatically after pasting (auto-send)</strong>
+              <span>Useful in chat apps when you want to send immediately after dictating.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="panel-models" class="panel" aria-labelledby="nav-models">
+        <header class="panel-head">
+          <h2>Models</h2>
+          <p>The models that turn your speech into clean text.</p>
+        </header>
+
+        <div id="modelDownloadCard" class="card" hidden>
+          <div class="card-title">Downloading speech model</div>
+          <p class="hint" style="margin-top:0;margin-bottom:8px">
+            Whisper large-v3-turbo (~1.5 GB) downloads once on first launch. Dictation works after this finishes.
+          </p>
+          <div class="progress-track" aria-hidden="true">
+            <div id="modelDownloadBar" class="progress-fill"></div>
+          </div>
+          <p id="modelDownloadMeta" class="download-meta">Starting…</p>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Transcription</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">Where speech becomes text. Local runs fully offline (default).</p>
+
+          <div class="field">
+            <label for="asrLanguage">Language</label>
+            <select id="asrLanguage" class="control">
+              <option value="auto">Normal — detect &amp; keep spoken language</option>
+              <option value="en">Force English</option>
+              <option value="es">Español (forzar español)</option>
+              <option value="translate_en">Translate anything → English</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="asrBackend">Backend</label>
+            <select id="asrBackend" class="control">
+              <option value="local">Local — Whisper (offline, private)</option>
+              <option value="groq">Groq API (fast, cloud)</option>
+              <option value="openai">OpenAI API (cloud)</option>
+            </select>
+          </div>
+
+          <div id="asrCloudFields" style="display:none">
+            <div class="field">
+              <label for="asrApiKey">API key</label>
+              <input id="asrApiKey" class="control" type="password" spellcheck="false" autocomplete="off" placeholder="Paste your API key" />
+            </div>
+            <div class="field">
+              <label for="asrModel">Model</label>
+              <select id="asrModel" class="control"></select>
+            </div>
+            <p class="hint" id="asrHint"></p>
+          </div>
+
+          <p class="hint">
+            Local keeps your voice on this Mac and needs no internet. Cloud backends send audio to a third party — faster and they free up ~1.5&nbsp;GB of RAM, but require an API key and internet.
+          </p>
+
+          <div id="asrMsg" class="msg"></div>
+          <div class="btn-row">
+            <button id="asrSave" class="primary" disabled>Save</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Cleanup engine</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">Polishes the transcript after rules cleanup. Rules always run first.</p>
+
+          <div class="field">
+            <label for="cleanupBackend">Engine</label>
+            <select id="cleanupBackend" class="control">
+              <option value="ollama">Ollama (default)</option>
+              <option value="lmstudio">LM Studio</option>
+            </select>
+          </div>
+
+          <div class="field" id="lmstudioUrlField" style="display:none">
+            <label for="lmstudioBaseUrl">LM Studio server URL</label>
+            <div class="combo-row">
+              <input id="lmstudioBaseUrl" class="control" spellcheck="false" autocomplete="off" placeholder="http://localhost:1234/v1" />
+              <button id="lmstudioUrlSave" type="button">Apply</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="cleanupModel" id="cleanupModelLabel">Model name</label>
+            <div class="combo-wrap">
+              <div class="combo-row">
+                <input id="cleanupModel" class="control" spellcheck="false" autocomplete="off" placeholder="gemma3:1b"
+                  role="combobox" aria-expanded="false" aria-controls="cleanupList" aria-autocomplete="list" />
+                <button id="cleanupToggle" class="combo-toggle" type="button" aria-label="Show models" aria-expanded="false" aria-controls="cleanupList">▾</button>
+              </div>
+              <div id="cleanupList" class="combo-list" role="listbox" aria-label="Available cleanup models"></div>
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="cleanupSave" class="primary" disabled>Save model</button>
+            <button id="cleanupRefresh" type="button">Refresh list</button>
+          </div>
+          <div id="cleanupMsg" class="msg"></div>
+          <p class="hint" id="cleanupHint">
+            Type any Ollama model, or open the list to pick from installed ones. <b>gemma3:1b</b> is always available as the DictaFlow default.
+          </p>
+        </div>
+      </section>
+
+      <section id="panel-appearance" class="panel" aria-labelledby="nav-appearance">
+        <header class="panel-head">
+          <h2>Appearance</h2>
+          <p>Control the floating HUD pill and live transcript preview.</p>
+        </header>
+
+        <div class="card">
+          <div class="card-title">HUD</div>
+          <div class="field">
+            <label for="hudStyle">Style</label>
+            <select id="hudStyle" class="control">
+              <option value="classic">Classic: bottom pill + waveform</option>
+              <option value="notch">Notch: top bar</option>
+              <option value="cursor">Cursor: follows mouse + waveform</option>
+            </select>
+          </div>
+
+          <div class="toggle-row">
+            <input id="hudAlwaysOnTop" type="checkbox" aria-labelledby="hudAlwaysOnTopLabel" />
+            <div class="toggle-copy">
+              <strong id="hudAlwaysOnTopLabel">Keep HUD above other windows</strong>
+              <span>When off, the pill only floats up while you dictate.</span>
+            </div>
+          </div>
+
+          <div class="toggle-row">
+            <input id="liveTranscript" type="checkbox" aria-labelledby="liveTranscriptLabel" />
+            <div class="toggle-copy">
+              <strong id="liveTranscriptLabel">Show live transcript while recording</strong>
+              <span>Preview words in the HUD before you release the hotkey.</span>
+            </div>
+          </div>
+
+          <div class="btn-row">
+            <button id="resetHudPosition" type="button">Reset pill position</button>
+          </div>
+          <p class="hint">Use reset for Classic or Notch if the pill disappears off-screen. Cursor style tracks your mouse while dictating.</p>
+          <div id="cursorHudStatus" class="hint" hidden></div>
+          <div id="hudStyleMsg" class="msg"></div>
+        </div>
+      </section>
+
+      <section id="panel-vocabulary" class="panel" aria-labelledby="nav-vocabulary">
+        <header class="panel-head">
+          <h2>Vocabulary</h2>
+          <p>Teach DictaFlow names and terms to recognize, and corrections when Whisper gets them wrong.</p>
+        </header>
+
+        <div class="card">
+          <div class="card-title">Words to recognize</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">
+            Names, brands, slang — comma-separated. Biases transcription before you dictate them.
+          </p>
+          <div class="field">
+            <textarea id="vocab" class="control" rows="3" spellcheck="false" placeholder="e.g. McKenzie, Anthropic, CUDA"></textarea>
+          </div>
+          <div id="vocabMsg" class="msg"></div>
+          <div class="btn-row">
+            <button id="vocabSave" class="primary" disabled>Save words</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Corrections</div>
+          <p class="hint" style="margin-top:0;margin-bottom:12px">
+            When Whisper hears one thing but you want another. Applied after transcription and fed back into future prompts.
+          </p>
+          <div class="field-row">
+            <div class="field">
+              <label for="corrFrom">Heard</label>
+              <input id="corrFrom" class="control" type="text" spellcheck="false" placeholder="e.g. use cloud" />
+            </div>
+            <div class="field">
+              <label for="corrTo">Wanted</label>
+              <input id="corrTo" class="control" type="text" spellcheck="false" placeholder="e.g. use Claude" />
+            </div>
+          </div>
+          <div class="btn-row">
+            <button id="corrAdd" type="button">Add correction</button>
+          </div>
+          <div id="dictList" class="dict-list">
+            <div class="dict-empty">Loading…</div>
+          </div>
+          <div class="btn-row">
+            <button id="dictRefresh" type="button">Refresh</button>
+          </div>
+          <div id="dictMsg" class="msg"></div>
+          <p class="hint">
+            Add corrections here: what Whisper hears, and what it should become.
+            For ambiguous words like <em>cloud</em>, use a phrase (e.g. “use cloud” → “use Claude”) so weather talk stays intact.
+          </p>
+        </div>
+      </section>
+
+      <section id="panel-startup" class="panel" aria-labelledby="nav-startup">
+        <header class="panel-head">
+          <h2>Startup</h2>
+          <p>Startup and background behavior.</p>
+        </header>
+
+        <div class="card">
+          <div class="card-title">Startup</div>
+          <div id="launchAtLoginRow" class="toggle-row">
+            <input id="launchAtLogin" type="checkbox" aria-labelledby="launchAtLoginLabel" />
+            <div class="toggle-copy">
+              <strong id="launchAtLoginLabel">Open DictaFlow at login</strong>
+              <span>Keep the menu bar agent ready without launching the app manually.</span>
+            </div>
+          </div>
+          <p id="masLoginNote" class="hint" hidden>
+            Launch at login is not available in the Mac App Store build because of App Sandbox restrictions.
+          </p>
+          <div id="loginMsg" class="msg"></div>
+          <p class="hint">Build <span id="buildVersion">…</span> · <span id="buildHash">…</span></p>
+        </div>
+      </section>
+
+      <section id="panel-permissions" class="panel" aria-labelledby="nav-permissions">
+        <header class="panel-head">
+          <h2>Permissions</h2>
+          <p>DictaFlow needs Microphone and Accessibility for dictation.</p>
+        </header>
+
+        <div class="card">
+          <div class="card-title">macOS access</div>
+          <div class="field">
+            <span class="field-label">Accessibility</span>
+            <div id="axStatus" class="badge pending">Checking…</div>
+          </div>
+          <div class="btn-row">
+            <button id="axRequest" class="primary" type="button">Request Accessibility</button>
+            <button id="axRecheck" type="button">Re-check</button>
+            <button id="axOpen" type="button">Accessibility Settings</button>
+            <button id="micOpen" type="button">Microphone Settings</button>
+          </div>
+          <p class="hint">
+            First time: click <b>Request Accessibility</b>, then toggle <b>DictaFlow</b> on in
+            System Settings (needed to paste at your cursor). Microphone is prompted when you
+            first dictate.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <button id="close" type="button">Close</button>
+    </footer>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="settings.js"></script>
+</body>
+</html>
